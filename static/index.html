@@ -29,11 +29,23 @@
         <input type="date" id="endDate" />
         <button onclick="searchRange()">Search Range</button>
       </div>
+      <div class="timeline-controls">
+        <label for="timelineYear">Timeline Mode (1995-2025):</label>
+        <input type="range" id="timelineYear" min="1995" max="2025" value="2025" />
+        <span id="timelineYearLabel">2025</span>
+        <button onclick="loadTimelineDate()">Load Year Snapshot</button>
+      </div>
     </header>
 
     <section class="facts-panel">
       <h2>🚀 Space Facts</h2>
       <div id="facts">Loading...</div>
+    </section>
+
+    <section class="facts-panel">
+      <h2>🧠 AI Curated Collections</h2>
+      <button onclick="generateCollections()">Generate Collections From Current Image</button>
+      <div id="collectionsOutput" class="output-box"></div>
     </section>
 
     <div id="loader" class="loader"></div>
@@ -46,6 +58,37 @@
         <p id="modalDate"></p>
         <img id="modalImg" alt="APOD" />
         <p id="modalDesc"></p>
+
+        <div class="segment-row">
+          <span>Explain this image:</span>
+          <button onclick="generateRewrite('Beginner')">Beginner</button>
+          <button onclick="generateRewrite('Student')">Student</button>
+          <button onclick="generateRewrite('Expert')">Expert</button>
+          <button onclick="generateELI10()">Explain Like I'm 10</button>
+        </div>
+        <div id="rewriteOutput" class="output-box"></div>
+
+        <div class="segment-row">
+          <input id="chatQuestion" placeholder="Ask a question about this image..." />
+          <button onclick="askImageQuestion()">Ask</button>
+          <button onclick="startVoiceQuestion()">🎤 Ask the universe</button>
+        </div>
+        <div id="chatOutput" class="output-box"></div>
+
+        <div class="segment-row wrap">
+          <button onclick="generateHotspots()">Highlight Objects</button>
+          <button onclick="generateDidYouKnow()">Did You Know?</button>
+          <button onclick="generateSimilar()">Compare Similar Images</button>
+          <button onclick="generateDistance()">Space Distance Visualizer</button>
+          <button onclick="generateQuiz()">Daily Astronomy Quiz</button>
+          <button onclick="generateStory()">AI Story Mode</button>
+          <button onclick="generateLesson()">Space Learning Mode</button>
+          <button onclick="generateCaptions()">Generate Captions</button>
+          <button onclick="generateTimelineContext()">Timeline Context</button>
+        </div>
+        <input id="distanceInput" placeholder="Optional distance e.g. 2500 light years" />
+        <div id="featureOutput" class="output-box"></div>
+
         <div class="modal-actions">
           <button onclick="saveFavorite()">⭐ Save Favorite</button>
           <label>Rate:
