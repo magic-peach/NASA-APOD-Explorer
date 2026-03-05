@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NASA APOD Explorer</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>NASA APOD Explorer</h1>
+      <div class="controls">
+        <input type="date" id="dateInput" />
+        <button onclick="searchByDate()">Search Date</button>
+        <button onclick="showFavorites()">⭐ Favorites</button>
+        <button onclick="toggleTheme()">🌙 Theme</button>
+      </div>
+      <div class="range-controls">
+        <input type="date" id="startDate" />
+        <input type="date" id="endDate" />
+        <button onclick="searchRange()">Search Range</button>
+      </div>
+    </header>
+
+    <section class="facts-panel">
+      <h2>🚀 Space Facts</h2>
+      <div id="facts">Loading...</div>
+    </section>
+
+    <div id="loader" class="loader"></div>
+    <main id="gallery" class="gallery-grid"></main>
+
+    <div id="modal" class="modal hidden">
+      <div class="modal-content">
+        <button class="close" onclick="closeModal()">×</button>
+        <h2 id="modalTitle"></h2>
+        <p id="modalDate"></p>
+        <img id="modalImg" alt="APOD" />
+        <p id="modalDesc"></p>
+        <div class="modal-actions">
+          <button id="favBtn" onclick="saveFavorite()">⭐ Save Favorite</button>
+          <a id="downloadBtn" download target="_blank" rel="noreferrer">Download Image</a>
+        </div>
+      </div>
+    </div>
+
+    <script src="script.js"></script>
+  </body>
+</html>
