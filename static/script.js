@@ -4,6 +4,7 @@ let currentItems = [];
 let page = 0;
 let isLoading = false;
 let mode = "infinite";
+let activeItem = null;
 
 function setLoading(show) {
   loader.style.display = show ? "block" : "none";
@@ -39,7 +40,15 @@ function renderCards(items, append = false) {
     });
 }
 
+function clearAIOutputs() {
+  ["rewriteOutput", "chatOutput", "featureOutput"].forEach((id) => {
+    document.getElementById(id).innerText = "";
+  });
+}
+
 function openModal(data) {
+  activeItem = data;
+  clearAIOutputs();
   document.getElementById("modal").classList.remove("hidden");
   document.getElementById("modalTitle").innerText = data.title;
   document.getElementById("modalDate").innerText = data.date;
@@ -125,6 +134,113 @@ async function loadFacts() {
   } catch {
     document.getElementById("facts").innerText = "Could not load facts.";
   }
+}
+
+async function runLLM(task, extra = {}, outputId = "featureOutput") {
+  if (!activeItem) return;
+  const output = document.getElementById(outputId);
+  output.innerText = "Thinking...";
+
+  const res = await fetch("/api/llm", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      task,
+      title: activeItem.title,
+      date: activeItem.date,
+      explanation: activeItem.explanation,
+      ...extra,
+    }),
+  });
+  const data = await res.json();
+  const source = data.source === "llm" ? "LLM" : "fallback";
+  output.innerText = `${data.response}\n\n[source: ${source}]`;
+}
+
+function generateRewrite(level) {
+  runLLM("rewrite", { level }, "rewriteOutput");
+}
+
+function askImageQuestion() {
+  const question = document.getElementById("chatQuestion").value;
+  if (!question.trim()) return;
+  runLLM("chat", { question }, "chatOutput");
+}
+
+function generateHotspots() {
+  runLLM("hotspots");
+}
+
+function generateDidYouKnow() {
+  runLLM("facts");
+}
+
+function generateSimilar() {
+  runLLM("similar");
+}
+
+function generateTimelineContext() {
+  runLLM("timeline");
+}
+
+function generateELI10() {
+  runLLM("eli10", {}, "rewriteOutput");
+}
+
+function generateDistance() {
+  const distance = document.getElementById("distanceInput").value;
+  runLLM("distance", { distance });
+}
+
+function generateQuiz() {
+  runLLM("quiz");
+}
+
+function generateStory() {
+  runLLM("story");
+}
+
+function generateLesson() {
+  runLLM("lesson");
+}
+
+function generateCaptions() {
+  runLLM("captions");
+}
+
+function generateCollections() {
+  if (!currentItems.length) return;
+  activeItem = currentItems.find((i) => i.media_type === "image") || currentItems[0];
+  runLLM("collections", {}, "collectionsOutput");
+}
+
+async function loadTimelineDate() {
+  const year = document.getElementById("timelineYear").value;
+  document.getElementById("timelineYearLabel").innerText = year;
+  mode = "timeline";
+  const items = await fetchApod(`?date=${year}-01-01`);
+  currentItems = items;
+  renderCards(items);
+}
+
+document.getElementById("timelineYear").addEventListener("input", (e) => {
+  document.getElementById("timelineYearLabel").innerText = e.target.value;
+});
+
+function startVoiceQuestion() {
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!Recognition) {
+    document.getElementById("chatOutput").innerText = "Voice input is not supported in this browser.";
+    return;
+  }
+  const recognition = new Recognition();
+  recognition.lang = "en-US";
+  recognition.onresult = (event) => {
+    const transcript = event.results[0][0].transcript;
+    document.getElementById("chatQuestion").value = transcript;
+    askImageQuestion();
+  };
+  recognition.start();
 }
 
 loadMoreGallery();

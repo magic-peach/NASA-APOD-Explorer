@@ -24,11 +24,13 @@ header {
 }
 
 .controls,
-.range-controls {
+.range-controls,
+.timeline-controls {
   display: flex;
   gap: 0.5rem;
   flex-wrap: wrap;
   margin: 0.5rem 0;
+  align-items: center;
 }
 
 button,
@@ -119,7 +121,8 @@ input {
 
 .modal-content {
   background: #111;
-  max-width: 760px;
+  max-width: 900px;
+  width: min(900px, 94vw);
   max-height: 90vh;
   overflow: auto;
   padding: 1rem;
@@ -128,7 +131,7 @@ input {
 
 .modal-content img {
   width: 100%;
-  max-height: 400px;
+  max-height: 380px;
   object-fit: contain;
 }
 
@@ -141,4 +144,29 @@ input {
   display: flex;
   gap: 0.5rem;
   margin-top: 0.8rem;
+}
+
+.segment-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin: 0.7rem 0;
+}
+
+.segment-row.wrap {
+  flex-wrap: wrap;
+}
+
+.segment-row input {
+  flex: 1;
+}
+
+.output-box {
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 0.75rem;
+  margin: 0.45rem 0 0.8rem;
+  white-space: pre-wrap;
+  min-height: 50px;
+  background: #0f0f0f;
 }
