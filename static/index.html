@@ -9,10 +9,19 @@
   <body>
     <header>
       <h1>NASA APOD Explorer</h1>
+      <div class="auth-row">
+        <input id="authUser" placeholder="username or email" />
+        <input id="authPass" type="password" placeholder="password" />
+        <button onclick="signup()">Sign up</button>
+        <button onclick="login()">Log in</button>
+        <button onclick="logout()">Log out</button>
+        <span id="authStatus">Not logged in</span>
+      </div>
       <div class="controls">
         <input type="date" id="dateInput" />
         <button onclick="searchByDate()">Search Date</button>
-        <button onclick="showFavorites()">⭐ Favorites</button>
+        <button onclick="showFavorites()">⭐ My Favorites</button>
+        <button onclick="showHistory()">🕘 Recently Viewed</button>
         <button onclick="toggleTheme()">🌙 Theme</button>
       </div>
       <div class="range-controls">
@@ -81,9 +90,19 @@
         <div id="featureOutput" class="output-box"></div>
 
         <div class="modal-actions">
-          <button id="favBtn" onclick="saveFavorite()">⭐ Save Favorite</button>
+          <button onclick="saveFavorite()">⭐ Save Favorite</button>
+          <label>Rate:
+            <select id="ratingSelect">
+              <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option>
+            </select>
+          </label>
+          <button onclick="submitRating()">Submit Rating</button>
           <a id="downloadBtn" download target="_blank" rel="noreferrer">Download Image</a>
         </div>
+        <h3>Comments</h3>
+        <div id="comments"></div>
+        <input id="commentInput" placeholder="Add a comment" />
+        <button onclick="postComment()">Post Comment</button>
       </div>
     </div>
 

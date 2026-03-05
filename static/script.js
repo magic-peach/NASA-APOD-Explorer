@@ -1,9 +1,14 @@
 const gallery = document.getElementById("gallery");
 const loader = document.getElementById("loader");
 let currentItems = [];
-let page = 0;
 let isLoading = false;
 let mode = "infinite";
+let currentModalItem = null;
+
+function authHeaders() {
+  const token = localStorage.getItem("token") || "";
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 let activeItem = null;
 
 function setLoading(show) {
@@ -13,7 +18,7 @@ function setLoading(show) {
 async function fetchApod(params = "") {
   setLoading(true);
   try {
-    const res = await fetch(`/api/apod${params}`);
+    const res = await fetch(`/api/apod${params}`, { headers: authHeaders() });
     const data = await res.json();
     return Array.isArray(data) ? data : [data];
   } finally {
@@ -24,7 +29,7 @@ async function fetchApod(params = "") {
 function renderCards(items, append = false) {
   if (!append) gallery.innerHTML = "";
   items
-    .filter((item) => item.media_type === "image")
+    .filter((item) => (item.media_type || "image") === "image")
     .forEach((item) => {
       const card = document.createElement("article");
       card.className = "gallery-card";
@@ -40,6 +45,8 @@ function renderCards(items, append = false) {
     });
 }
 
+async function openModal(data) {
+  currentModalItem = data;
 function clearAIOutputs() {
   ["rewriteOutput", "chatOutput", "featureOutput"].forEach((id) => {
     document.getElementById(id).innerText = "";
@@ -55,6 +62,7 @@ function openModal(data) {
   document.getElementById("modalDesc").innerText = data.explanation || "";
   document.getElementById("modalImg").src = data.url;
   document.getElementById("downloadBtn").href = data.hdurl || data.url;
+  await loadComments();
 }
 
 function closeModal() {
@@ -78,24 +86,69 @@ async function searchRange() {
   renderCards(currentItems);
 }
 
-function saveFavorite() {
-  const data = {
-    title: document.getElementById("modalTitle").innerText,
-    date: document.getElementById("modalDate").innerText,
-    url: document.getElementById("modalImg").src,
-  };
-
-  let favs = JSON.parse(localStorage.getItem("favorites") || "[]");
-  favs.push(data);
-
-  localStorage.setItem("favorites", JSON.stringify(favs));
-  alert("Saved to favorites!");
+async function saveFavorite() {
+  if (!currentModalItem) return;
+  const res = await fetch("/api/favorites", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({
+      title: currentModalItem.title,
+      date: currentModalItem.date,
+      url: currentModalItem.url,
+    }),
+  });
+  alert(res.ok ? "Saved to favorites!" : "Please log in first.");
 }
 
-function showFavorites() {
+async function showFavorites() {
   mode = "favorites";
-  const favs = JSON.parse(localStorage.getItem("favorites") || "[]");
-  renderCards(favs);
+  const res = await fetch("/api/favorites", { headers: authHeaders() });
+  if (!res.ok) return alert("Login required");
+  currentItems = await res.json();
+  renderCards(currentItems);
+}
+
+async function showHistory() {
+  const res = await fetch("/api/history", { headers: authHeaders() });
+  if (!res.ok) return alert("Login required");
+  const history = await res.json();
+  gallery.innerHTML = history
+    .map((h) => `<article class="gallery-card"><div class="content"><h3>${h.title}</h3><p>${h.date}</p><small>${h.viewed_at}</small></div></article>`)
+    .join("");
+}
+
+async function loadComments() {
+  if (!currentModalItem) return;
+  const res = await fetch(`/api/comments?date=${currentModalItem.date}`);
+  const comments = await res.json();
+  document.getElementById("comments").innerHTML = comments
+    .map((c) => `<div class="comment-item"><strong>${c.username}</strong>: ${c.comment}</div>`)
+    .join("");
+}
+
+async function postComment() {
+  if (!currentModalItem) return;
+  const comment = document.getElementById("commentInput").value.trim();
+  if (!comment) return;
+  const res = await fetch(`/api/comments?date=${currentModalItem.date}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ comment }),
+  });
+  if (!res.ok) return alert("Login required");
+  document.getElementById("commentInput").value = "";
+  loadComments();
+}
+
+async function submitRating() {
+  if (!currentModalItem) return;
+  const rating = Number(document.getElementById("ratingSelect").value);
+  const res = await fetch(`/api/ratings?date=${currentModalItem.date}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ rating }),
+  });
+  alert(res.ok ? "Rating saved" : "Login required");
 }
 
 function toggleTheme() {
@@ -105,7 +158,6 @@ function toggleTheme() {
 async function loadMoreGallery() {
   if (isLoading || mode !== "infinite") return;
   isLoading = true;
-  page += 1;
   const items = await fetchApod("?count=6");
   currentItems = currentItems.concat(items);
   renderCards(items, true);
@@ -113,10 +165,7 @@ async function loadMoreGallery() {
 }
 
 window.addEventListener("scroll", () => {
-  if (
-    window.innerHeight + window.scrollY >=
-    document.body.offsetHeight - 200
-  ) {
+  if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 200) {
     loadMoreGallery();
   }
 });
@@ -136,6 +185,36 @@ async function loadFacts() {
   }
 }
 
+async function signup() {
+  const username = document.getElementById("authUser").value.trim();
+  const password = document.getElementById("authPass").value;
+  const email = username.includes("@") ? username : `${username}@space.local`;
+  const res = await fetch("/api/signup", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, email, password }),
+  });
+  alert(res.ok ? "Signup successful. Please login." : "Signup failed");
+}
+
+async function login() {
+  const username = document.getElementById("authUser").value.trim();
+  const password = document.getElementById("authPass").value;
+  const res = await fetch("/api/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  if (!res.ok) return alert("Invalid login");
+  const data = await res.json();
+  localStorage.setItem("token", data.token);
+  document.getElementById("authStatus").innerText = `Logged in as ${username}`;
+}
+
+async function logout() {
+  await fetch("/api/logout", { method: "POST", headers: authHeaders() });
+  localStorage.removeItem("token");
+  document.getElementById("authStatus").innerText = "Not logged in";
 async function runLLM(task, extra = {}, outputId = "featureOutput") {
   if (!activeItem) return;
   const output = document.getElementById(outputId);
