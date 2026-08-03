@@ -45,15 +45,14 @@ function renderCards(items, append = false) {
     });
 }
 
-async function openModal(data) {
-  currentModalItem = data;
 function clearAIOutputs() {
   ["rewriteOutput", "chatOutput", "featureOutput"].forEach((id) => {
     document.getElementById(id).innerText = "";
   });
 }
 
-function openModal(data) {
+async function openModal(data) {
+  currentModalItem = data;
   activeItem = data;
   clearAIOutputs();
   document.getElementById("modal").classList.remove("hidden");
@@ -215,6 +214,8 @@ async function logout() {
   await fetch("/api/logout", { method: "POST", headers: authHeaders() });
   localStorage.removeItem("token");
   document.getElementById("authStatus").innerText = "Not logged in";
+}
+
 async function runLLM(task, extra = {}, outputId = "featureOutput") {
   if (!activeItem) return;
   const output = document.getElementById(outputId);
