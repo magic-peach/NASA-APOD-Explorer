@@ -35,7 +35,11 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 
-	ctx := context.Background()
+	// ctx is cancelled when run returns, which stops the background cache
+	// janitors. (Phase 3 ties this to SIGINT/SIGTERM for graceful shutdown.)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	db, err := store.Open(ctx, cfg.DBPath)
 	if err != nil {
 		return err
@@ -44,15 +48,20 @@ func run(logger *slog.Logger) error {
 
 	httpClient := &http.Client{Timeout: 15 * time.Second}
 
+	apodCache := cache.New[string, []apod.Item](cfg.CacheTTL)
+	factsCache := cache.New[string, spacefacts.Summary](cfg.CacheTTL)
+	go apodCache.RunJanitor(ctx, time.Minute)
+	go factsCache.RunJanitor(ctx, time.Minute)
+
 	apodClient := apod.NewCachedClient(
 		&apod.HTTPClient{BaseURL: apod.DefaultBaseURL, APIKey: cfg.NASAAPIKey, HTTPClient: httpClient},
-		cache.New[string, []apod.Item](cfg.CacheTTL),
+		apodCache,
 	)
 	facts := &spacefacts.Client{
 		BaseURL:    spacefacts.DefaultBaseURL,
 		APIKey:     cfg.SolarSystemAPIKey,
 		HTTPClient: httpClient,
-		Cache:      cache.New[string, spacefacts.Summary](cfg.CacheTTL),
+		Cache:      factsCache,
 	}
 	assistant := &llm.Assistant{
 		APIKey:     cfg.OpenAIAPIKey,
