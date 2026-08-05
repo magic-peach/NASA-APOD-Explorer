@@ -9,6 +9,8 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -23,6 +25,25 @@ type Config struct {
 	// (SOLAR_SYSTEM_API_KEY). Optional: without it /api/space-facts
 	// returns 502 and the UI shows a friendly "could not load" message.
 	SolarSystemAPIKey string
+
+	// AllowedOrigin is the one cross-origin site allowed to call the API
+	// (APP_ORIGIN, e.g. "https://apod.example.com"). Empty means only
+	// same-origin requests, which need no CORS headers at all.
+	AllowedOrigin string
+
+	// RateLimitRPS and RateLimitBurst configure the per-IP token bucket
+	// for /api/ routes (RATE_LIMIT_RPS, RATE_LIMIT_BURST).
+	RateLimitRPS   float64
+	RateLimitBurst int
+
+	// TrustedProxyHeader names a header set by a trusted reverse proxy that
+	// carries the real client IP (TRUSTED_PROXY_HEADER, e.g. "Fly-Client-IP"
+	// on Fly.io). Leave empty when not behind such a proxy: client-supplied
+	// headers like X-Forwarded-For are trivially spoofed.
+	TrustedProxyHeader string
+
+	// LogFormat is "text" (human-friendly, default) or "json" (LOG_FORMAT).
+	LogFormat string
 
 	// PasswordSalt is the static salt used by the legacy SHA-256 password
 	// hash (APP_SALT). It exists only to keep Phase 1 behaviour identical
@@ -60,15 +81,33 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 		return Config{}, fmt.Errorf("config: CACHE_TTL must be positive, got %s", ttl)
 	}
 
+	rps, err := strconv.ParseFloat(get("RATE_LIMIT_RPS", "5"), 64)
+	if err != nil || rps <= 0 {
+		return Config{}, fmt.Errorf("config: RATE_LIMIT_RPS must be a positive number")
+	}
+	burst, err := strconv.Atoi(get("RATE_LIMIT_BURST", "20"))
+	if err != nil || burst <= 0 {
+		return Config{}, fmt.Errorf("config: RATE_LIMIT_BURST must be a positive integer")
+	}
+	logFormat := strings.ToLower(get("LOG_FORMAT", "text"))
+	if logFormat != "text" && logFormat != "json" {
+		return Config{}, fmt.Errorf("config: LOG_FORMAT must be text or json, got %q", logFormat)
+	}
+
 	return Config{
-		Port:              get("PORT", "8080"),
-		NASAAPIKey:        get("NASA_API_KEY", "DEMO_KEY"),
-		CacheTTL:          ttl,
-		DBPath:            get("DB_PATH", "app.db"),
-		SolarSystemAPIKey: getenv("SOLAR_SYSTEM_API_KEY"),
-		PasswordSalt:      get("APP_SALT", "nasa-apod-salt"),
-		OpenAIAPIKey:      getenv("OPENAI_API_KEY"),
-		LLMModel:          get("LLM_MODEL", "gpt-4o-mini"),
-		LLMBaseURL:        get("LLM_BASE_URL", "https://api.openai.com/v1/chat/completions"),
+		Port:               get("PORT", "8080"),
+		NASAAPIKey:         get("NASA_API_KEY", "DEMO_KEY"),
+		CacheTTL:           ttl,
+		DBPath:             get("DB_PATH", "app.db"),
+		SolarSystemAPIKey:  getenv("SOLAR_SYSTEM_API_KEY"),
+		AllowedOrigin:      strings.TrimRight(getenv("APP_ORIGIN"), "/"),
+		RateLimitRPS:       rps,
+		RateLimitBurst:     burst,
+		TrustedProxyHeader: getenv("TRUSTED_PROXY_HEADER"),
+		LogFormat:          logFormat,
+		PasswordSalt:       get("APP_SALT", "nasa-apod-salt"),
+		OpenAIAPIKey:       getenv("OPENAI_API_KEY"),
+		LLMModel:           get("LLM_MODEL", "gpt-4o-mini"),
+		LLMBaseURL:         get("LLM_BASE_URL", "https://api.openai.com/v1/chat/completions"),
 	}, nil
 }

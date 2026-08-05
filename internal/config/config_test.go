@@ -24,6 +24,9 @@ func TestLoadFrom(t *testing.T) {
 		},
 		{name: "unparseable TTL", env: map[string]string{"CACHE_TTL": "soon"}, wantErr: true},
 		{name: "non-positive TTL", env: map[string]string{"CACHE_TTL": "0s"}, wantErr: true},
+		{name: "bad rate limit", env: map[string]string{"RATE_LIMIT_RPS": "-1"}, wantErr: true},
+		{name: "bad burst", env: map[string]string{"RATE_LIMIT_BURST": "many"}, wantErr: true},
+		{name: "bad log format", env: map[string]string{"LOG_FORMAT": "xml"}, wantErr: true},
 	}
 
 	for _, tt := range tests {
