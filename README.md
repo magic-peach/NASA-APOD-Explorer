@@ -53,8 +53,16 @@ The project uses a lightweight Go backend that serves both static frontend asset
 ```text
 .
 ├── go.mod
-├── main.go               # Go HTTP server + API proxy + in-memory cache
-└── static/
+├── cmd/server/main.go    # entry point: config, wiring, HTTP server
+├── internal/
+│   ├── apod/             # NASA APOD client + caching decorator
+│   ├── cache/            # in-memory TTL cache
+│   ├── config/           # env-var configuration
+│   ├── httpapi/          # HTTP handlers
+│   ├── llm/              # "explain this image" helpers
+│   ├── spacefacts/       # solar-system facts client
+│   └── store/            # SQLite persistence (database/sql)
+└── web/static/           # frontend, embedded into the binary with go:embed
     ├── index.html        # Main UI
     ├── script.js         # Client-side behavior
     └── styles.css        # Styling
@@ -134,7 +142,7 @@ cd NASA-APOD-Explorer
 ### Run Locally
 
 ```bash
-go run main.go
+go run ./cmd/server
 ```
 
 Then open:
@@ -153,13 +161,13 @@ Examples:
 
 ```bash
 export NASA_API_KEY="your_api_key_here"
-go run main.go
+go run ./cmd/server
 ```
 
 Or one-liner:
 
 ```bash
-NASA_API_KEY="your_api_key_here" go run main.go
+NASA_API_KEY="your_api_key_here" go run ./cmd/server
 ```
 
 ## Usage Guide
