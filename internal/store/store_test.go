@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/magic-peach/NASA-APOD-Explorer/internal/apod"
 )
@@ -96,5 +97,63 @@ func TestRatingsAverage(t *testing.T) {
 	}
 	if avg != 4.5 {
 		t.Errorf("average = %v, want 4.5", avg)
+	}
+}
+
+func TestMigrationsAreIdempotentAndVersioned(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	v, err := s.SchemaVersion(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != 2 {
+		t.Fatalf("schema version = %d, want 2", v)
+	}
+	// Running migrate again (as every restart does) must be a no-op.
+	if err := s.migrate(ctx); err != nil {
+		t.Fatalf("second migrate: %v", err)
+	}
+	if v2, _ := s.SchemaVersion(ctx); v2 != v {
+		t.Fatalf("version changed from %d to %d on re-run", v, v2)
+	}
+}
+
+func TestSessionsExpire(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	uid, _ := s.CreateUser(ctx, "ada", "ada@x", "h")
+	now := time.Unix(1_700_000_000, 0)
+
+	if err := s.CreateSession(ctx, "hash1", uid, now, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.SessionUser(ctx, "hash1", now.Add(59*time.Minute)); err != nil || got != uid {
+		t.Fatalf("live session: got (%d, %v)", got, err)
+	}
+	if _, err := s.SessionUser(ctx, "hash1", now.Add(time.Hour)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expired session: got %v, want ErrNotFound", err)
+	}
+	if n, _ := s.DeleteExpiredSessions(ctx, now.Add(2*time.Hour)); n != 1 {
+		t.Fatalf("purged %d sessions, want 1", n)
+	}
+}
+
+func TestDeleteFavoriteOnlyAffectsOwner(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	alice, _ := s.CreateUser(ctx, "alice", "a@x", "h")
+	bob, _ := s.CreateUser(ctx, "bob", "b@x", "h")
+	_ = s.AddFavorite(ctx, alice, Favorite{Date: "2024-01-01"})
+
+	if err := s.DeleteFavorite(ctx, bob, "2024-01-01"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("bob deleting alice's favorite: got %v, want ErrNotFound", err)
+	}
+	if err := s.DeleteFavorite(ctx, alice, "2024-01-01"); err != nil {
+		t.Fatalf("alice deleting her favorite: %v", err)
+	}
+	if favs, _ := s.ListFavorites(ctx, alice); len(favs) != 0 {
+		t.Fatalf("favorite still present: %+v", favs)
 	}
 }
