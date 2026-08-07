@@ -16,8 +16,11 @@ type Fetcher interface {
 }
 
 // DefaultFetchTimeout bounds a single upstream call made on behalf of
-// (possibly many) waiting requests.
-const DefaultFetchTimeout = 10 * time.Second
+// (possibly many) waiting requests. NASA's API can take well over 10s for
+// date ranges, so this is deliberately longer than any one handler waits:
+// if a user gives up, the shared fetch still finishes and fills the cache,
+// so their retry is an instant hit.
+const DefaultFetchTimeout = 25 * time.Second
 
 // CachedClient wraps another Fetcher with a TTL cache and request
 // coalescing.

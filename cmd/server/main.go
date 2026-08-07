@@ -57,7 +57,7 @@ func run(ctx context.Context) error {
 	defer db.Close() // runs last, after the server and background work have stopped
 
 	// Backstop timeout; each request also sets its own context deadline.
-	httpClient := &http.Client{Timeout: 20 * time.Second}
+	httpClient := &http.Client{Timeout: 30 * time.Second}
 
 	apodCache := cache.New[string, []apod.Item](cfg.CacheTTL)
 	factsCache := cache.New[string, spacefacts.Summary](cfg.CacheTTL)
