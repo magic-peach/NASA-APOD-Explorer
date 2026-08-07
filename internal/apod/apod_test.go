@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -58,5 +59,22 @@ func TestHTTPClientFetch(t *testing.T) {
 				t.Errorf("got %d items, want %d", len(items), tt.wantItems)
 			}
 		})
+	}
+}
+
+// TestTransportErrorsDoNotLeakAPIKey guards against the API key reaching
+// logs: net/http's *url.Error embeds the request URL (with ?api_key=) in
+// its message.
+func TestTransportErrorsDoNotLeakAPIKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	srv.Close() // nothing listening: every request fails at the transport level
+
+	c := &HTTPClient{BaseURL: srv.URL, APIKey: "super-secret-key", HTTPClient: http.DefaultClient}
+	_, err := c.Fetch(context.Background(), Query{Date: "2024-01-01"})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if strings.Contains(err.Error(), "super-secret-key") {
+		t.Fatalf("error message leaks the API key: %v", err)
 	}
 }
