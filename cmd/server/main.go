@@ -49,6 +49,9 @@ func run(ctx context.Context) error {
 	}
 	logger := newLogger(cfg.LogFormat)
 	slog.SetDefault(logger)
+	if cfg.SessionSecretGenerated {
+		logger.Warn("SESSION_SECRET not set; using a random one, so restarts will log everyone out")
+	}
 
 	db, err := store.Open(ctx, cfg.DBPath)
 	if err != nil {
@@ -82,7 +85,10 @@ func run(ctx context.Context) error {
 		},
 		Store:              db,
 		Static:             web.Static(),
-		PasswordSalt:       cfg.PasswordSalt,
+		SessionSecret:      cfg.SessionSecret,
+		SessionTTL:         cfg.SessionTTL,
+		CookieSecure:       cfg.CookieSecure,
+		LegacyPasswordSalt: cfg.LegacyPasswordSalt,
 		Logger:             logger,
 		AllowedOrigin:      cfg.AllowedOrigin,
 		RateLimitRPS:       cfg.RateLimitRPS,

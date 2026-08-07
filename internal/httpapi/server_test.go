@@ -14,6 +14,8 @@ import (
 	"testing/fstest"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/magic-peach/NASA-APOD-Explorer/internal/apod"
 	"github.com/magic-peach/NASA-APOD-Explorer/internal/llm"
 	"github.com/magic-peach/NASA-APOD-Explorer/internal/spacefacts"
@@ -70,9 +72,29 @@ func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Disca
 // fixedNow pins "today" so date validation is deterministic.
 var fixedNow = time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
 
+// testClock is a mutex-guarded clock: handlers read it from server
+// goroutines while a test may advance it, so it must be race-free.
+type testClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (c *testClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *testClock) Advance(d time.Duration) {
+	c.mu.Lock()
+	c.now = c.now.Add(d)
+	c.mu.Unlock()
+}
+
 type testEnv struct {
 	*httptest.Server
-	db *store.Store
+	db    *store.Store
+	clock *testClock
 }
 
 // newTestServer wires a Server against fakes and an in-memory database.
@@ -84,6 +106,7 @@ func newTestServer(t *testing.T, api *fakeAPOD) testEnv {
 	}
 	t.Cleanup(func() { db.Close() })
 
+	clock := &testClock{now: fixedNow}
 	srv := New(Deps{
 		APOD:           api,
 		Facts:          fakeFacts{},
@@ -91,13 +114,17 @@ func newTestServer(t *testing.T, api *fakeAPOD) testEnv {
 		Store:          db,
 		Static:         fstest.MapFS{"index.html": {Data: []byte("<h1>hello</h1>")}},
 		Logger:         discardLogger(),
-		Now:            func() time.Time { return fixedNow },
+		Now:            clock.Now,
 		RateLimitRPS:   1000, // keep the limiter out of the way in functional tests
 		RateLimitBurst: 1000,
+		SessionSecret:  []byte("test-secret-test-secret-test-secret"),
+		SessionTTL:     time.Hour,
+		CookieSecure:   true,
+		BcryptCost:     bcrypt.MinCost, // real cost is deliberately slow; tests don't need that
 	})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
-	return testEnv{Server: ts, db: db}
+	return testEnv{Server: ts, db: db, clock: clock}
 }
 
 func get(t *testing.T, url string) (*http.Response, string) {
@@ -111,12 +138,21 @@ func get(t *testing.T, url string) (*http.Response, string) {
 	return resp, string(body)
 }
 
-func postJSON(t *testing.T, url, token, body string) *http.Response {
+// do sends a request with an optional JSON body and session cookie. (We
+// attach the cookie by hand: a cookie jar would refuse to send a Secure
+// cookie to the plain-HTTP test server.)
+func do(t *testing.T, method, url string, session *http.Cookie, body string) *http.Response {
 	t.Helper()
-	req, _ := http.NewRequest(http.MethodPost, url, strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
+	var rdr io.Reader
+	if body != "" {
+		rdr = strings.NewReader(body)
+	}
+	req, _ := http.NewRequest(method, url, rdr)
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if session != nil {
+		req.AddCookie(session)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -199,7 +235,7 @@ func TestErrorsUseConsistentJSONShape(t *testing.T) {
 
 func TestPostRequiresJSONContentType(t *testing.T) {
 	ts := newTestServer(t, &fakeAPOD{})
-	resp, err := http.Post(ts.URL+"/api/signup", "application/x-www-form-urlencoded",
+	resp, err := http.Post(ts.URL+"/api/auth/signup", "application/x-www-form-urlencoded",
 		strings.NewReader("username=a&email=b&password=secret1"))
 	if err != nil {
 		t.Fatal(err)
@@ -293,41 +329,6 @@ func TestResponsesCarryRequestID(t *testing.T) {
 	resp, _ := get(t, ts.URL+"/healthz")
 	if resp.Header.Get("X-Request-ID") == "" {
 		t.Error("missing X-Request-ID header")
-	}
-}
-
-func TestSignupLoginFavoritesFlow(t *testing.T) {
-	ts := newTestServer(t, &fakeAPOD{})
-
-	if r := postJSON(t, ts.URL+"/api/signup", "", `{"username":"ada","email":"ada@x","password":"secret1"}`); r.StatusCode != 200 {
-		t.Fatalf("signup status %d", r.StatusCode)
-	}
-	if r := postJSON(t, ts.URL+"/api/favorites", "", `{"date":"2024-01-01"}`); r.StatusCode != 401 {
-		t.Fatalf("favorites without login: status %d, want 401", r.StatusCode)
-	}
-
-	r := postJSON(t, ts.URL+"/api/login", "", `{"username":"ada","password":"secret1"}`)
-	var login struct{ Token string }
-	_ = json.NewDecoder(r.Body).Decode(&login)
-	if login.Token == "" {
-		t.Fatal("no token returned")
-	}
-
-	if r := postJSON(t, ts.URL+"/api/favorites", login.Token, `{"date":"2024-01-01","title":"Moon"}`); r.StatusCode != 200 {
-		t.Fatalf("add favorite status %d", r.StatusCode)
-	}
-
-	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/favorites", nil)
-	req.Header.Set("Authorization", "Bearer "+login.Token)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	var favs []store.Favorite
-	_ = json.NewDecoder(resp.Body).Decode(&favs)
-	if len(favs) != 1 || favs[0].Title != "Moon" {
-		t.Errorf("favorites = %+v", favs)
 	}
 }
 

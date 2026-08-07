@@ -27,6 +27,8 @@ func TestLoadFrom(t *testing.T) {
 		{name: "bad rate limit", env: map[string]string{"RATE_LIMIT_RPS": "-1"}, wantErr: true},
 		{name: "bad burst", env: map[string]string{"RATE_LIMIT_BURST": "many"}, wantErr: true},
 		{name: "bad log format", env: map[string]string{"LOG_FORMAT": "xml"}, wantErr: true},
+		{name: "short session secret", env: map[string]string{"SESSION_SECRET": "too-short"}, wantErr: true},
+		{name: "bad cookie flag", env: map[string]string{"COOKIE_SECURE": "maybe"}, wantErr: true},
 	}
 
 	for _, tt := range tests {
@@ -47,5 +49,33 @@ func TestLoadFrom(t *testing.T) {
 				t.Errorf("got %+v, want %+v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestSessionSecret(t *testing.T) {
+	cfg, err := LoadFrom(func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.SessionSecretGenerated || len(cfg.SessionSecret) != 32 {
+		t.Errorf("missing SESSION_SECRET should generate a 32-byte secret, got %d bytes (generated=%v)",
+			len(cfg.SessionSecret), cfg.SessionSecretGenerated)
+	}
+	if !cfg.CookieSecure {
+		t.Error("cookies must be Secure by default")
+	}
+
+	given := "0123456789abcdef0123456789abcdef"
+	cfg, err = LoadFrom(func(k string) string {
+		if k == "SESSION_SECRET" {
+			return given
+		}
+		return ""
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SessionSecretGenerated || string(cfg.SessionSecret) != given {
+		t.Error("explicit SESSION_SECRET not used")
 	}
 }
