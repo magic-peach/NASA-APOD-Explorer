@@ -41,8 +41,18 @@ type Query struct {
 func (q Query) IsRange() bool { return q.StartDate != "" && q.EndDate != "" }
 
 // IsSingle reports whether NASA will answer this query with a single JSON
-// object (one date, or today) rather than an array.
-func (q Query) IsSingle() bool { return !q.IsRange() && q.Count == 0 }
+// object (one date, or today) rather than an array. It follows the same
+// precedence as values(): range, then date, then count.
+func (q Query) IsSingle() bool {
+	switch {
+	case q.IsRange():
+		return false
+	case q.Date != "":
+		return true
+	default:
+		return q.Count == 0
+	}
+}
 
 // values converts the query into NASA's URL parameters (without the key).
 func (q Query) values() url.Values {
