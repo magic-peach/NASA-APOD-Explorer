@@ -7,6 +7,7 @@
 package config
 
 import (
+	"crypto/rand"
 	"fmt"
 	"os"
 	"strconv"
@@ -45,10 +46,26 @@ type Config struct {
 	// LogFormat is "text" (human-friendly, default) or "json" (LOG_FORMAT).
 	LogFormat string
 
-	// PasswordSalt is the static salt used by the legacy SHA-256 password
-	// hash (APP_SALT). It exists only to keep Phase 1 behaviour identical
-	// and is removed when passwords move to bcrypt.
-	PasswordSalt string
+	// SessionSecret keys the HMAC used to store session tokens
+	// (SESSION_SECRET, at least 32 characters). If unset, a random secret
+	// is generated at startup and SessionSecretGenerated is true: fine for
+	// local development, but every restart then logs everyone out.
+	SessionSecret          []byte
+	SessionSecretGenerated bool
+
+	// SessionTTL is how long a login lasts (SESSION_TTL, default 720h).
+	SessionTTL time.Duration
+
+	// CookieSecure sets the Secure flag on the session cookie
+	// (COOKIE_SECURE, default true). Browsers treat http://localhost as
+	// secure, so this only needs to be false for plain-HTTP non-localhost
+	// testing.
+	CookieSecure bool
+
+	// LegacyPasswordSalt (APP_SALT) verifies passwords stored with the old
+	// salted SHA-256 scheme so those users can still log in; their hash is
+	// upgraded to bcrypt on that login.
+	LegacyPasswordSalt string
 
 	// Optional LLM settings for the "explain this image" helpers. When
 	// OpenAIAPIKey is empty the app uses built-in offline fallback text.
@@ -94,20 +111,42 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 		return Config{}, fmt.Errorf("config: LOG_FORMAT must be text or json, got %q", logFormat)
 	}
 
+	sessionTTL, err := time.ParseDuration(get("SESSION_TTL", "720h"))
+	if err != nil || sessionTTL <= 0 {
+		return Config{}, fmt.Errorf("config: SESSION_TTL must be a positive duration")
+	}
+	cookieSecure, err := strconv.ParseBool(get("COOKIE_SECURE", "true"))
+	if err != nil {
+		return Config{}, fmt.Errorf("config: COOKIE_SECURE must be true or false")
+	}
+
+	secret, generated := []byte(getenv("SESSION_SECRET")), false
+	switch {
+	case len(secret) == 0:
+		secret, generated = make([]byte, 32), true
+		_, _ = rand.Read(secret)
+	case len(secret) < 32:
+		return Config{}, fmt.Errorf("config: SESSION_SECRET must be at least 32 characters")
+	}
+
 	return Config{
-		Port:               get("PORT", "8080"),
-		NASAAPIKey:         get("NASA_API_KEY", "DEMO_KEY"),
-		CacheTTL:           ttl,
-		DBPath:             get("DB_PATH", "app.db"),
-		SolarSystemAPIKey:  getenv("SOLAR_SYSTEM_API_KEY"),
-		AllowedOrigin:      strings.TrimRight(getenv("APP_ORIGIN"), "/"),
-		RateLimitRPS:       rps,
-		RateLimitBurst:     burst,
-		TrustedProxyHeader: getenv("TRUSTED_PROXY_HEADER"),
-		LogFormat:          logFormat,
-		PasswordSalt:       get("APP_SALT", "nasa-apod-salt"),
-		OpenAIAPIKey:       getenv("OPENAI_API_KEY"),
-		LLMModel:           get("LLM_MODEL", "gpt-4o-mini"),
-		LLMBaseURL:         get("LLM_BASE_URL", "https://api.openai.com/v1/chat/completions"),
+		Port:                   get("PORT", "8080"),
+		NASAAPIKey:             get("NASA_API_KEY", "DEMO_KEY"),
+		CacheTTL:               ttl,
+		DBPath:                 get("DB_PATH", "app.db"),
+		SolarSystemAPIKey:      getenv("SOLAR_SYSTEM_API_KEY"),
+		AllowedOrigin:          strings.TrimRight(getenv("APP_ORIGIN"), "/"),
+		RateLimitRPS:           rps,
+		RateLimitBurst:         burst,
+		TrustedProxyHeader:     getenv("TRUSTED_PROXY_HEADER"),
+		LogFormat:              logFormat,
+		SessionSecret:          secret,
+		SessionSecretGenerated: generated,
+		SessionTTL:             sessionTTL,
+		CookieSecure:           cookieSecure,
+		LegacyPasswordSalt:     get("APP_SALT", "nasa-apod-salt"),
+		OpenAIAPIKey:           getenv("OPENAI_API_KEY"),
+		LLMModel:               get("LLM_MODEL", "gpt-4o-mini"),
+		LLMBaseURL:             get("LLM_BASE_URL", "https://api.openai.com/v1/chat/completions"),
 	}, nil
 }

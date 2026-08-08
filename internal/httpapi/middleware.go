@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"runtime/debug"
 	"strconv"
@@ -188,6 +189,39 @@ func withCORS(allowedOrigin string) middleware {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// ---- CSRF origin check --------------------------------------------------
+
+// withOriginCheck rejects state-changing requests (POST, PUT, PATCH,
+// DELETE) whose Origin header names another site. Browsers attach Origin to
+// these requests, so a forged form or fetch from evil.example is refused
+// even before we look at the session cookie. This is defence in depth on
+// top of SameSite=Lax cookies and the JSON-only request bodies.
+func withOriginCheck(allowedOrigin string) middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case http.MethodGet, http.MethodHead, http.MethodOptions:
+				next.ServeHTTP(w, r)
+				return
+			}
+			origin := r.Header.Get("Origin")
+			if origin == "" || sameHost(origin, r.Host) || (allowedOrigin != "" && origin == allowedOrigin) {
+				// No Origin means a non-browser client (curl, tests): it
+				// can't carry a victim's cookies, so CSRF doesn't apply.
+				next.ServeHTTP(w, r)
+				return
+			}
+			writeErr(w, http.StatusForbidden, codeForbidden, "cross-site request blocked")
+		})
+	}
+}
+
+// sameHost reports whether origin ("https://host:port") refers to host.
+func sameHost(origin, host string) bool {
+	u, err := url.Parse(origin)
+	return err == nil && u.Host != "" && strings.EqualFold(u.Host, host)
 }
 
 // ---- per-IP rate limiting ------------------------------------------------

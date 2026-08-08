@@ -32,8 +32,8 @@ type Store struct {
 	db *sql.DB
 }
 
-// Open opens (creating if needed) the SQLite database at path and makes sure
-// the schema exists. Use ":memory:" for a throwaway database in tests.
+// Open opens (creating if needed) the SQLite database at path and applies
+// any pending migrations. Use ":memory:" for a throwaway database in tests.
 func Open(ctx context.Context, path string) (*Store, error) {
 	// _pragma parameters are applied by the driver to every new connection:
 	//   foreign_keys  - enforce REFERENCES constraints (off by default in SQLite)
@@ -54,7 +54,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	}
 
 	s := &Store{db: db}
-	if err := s.createSchema(ctx); err != nil {
+	if err := s.migrate(ctx); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -66,62 +66,6 @@ func (s *Store) Close() error { return s.db.Close() }
 
 // Ping verifies the database is reachable.
 func (s *Store) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
-
-func (s *Store) createSchema(ctx context.Context) error {
-	stmts := []string{
-		`CREATE TABLE IF NOT EXISTS users (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			username TEXT UNIQUE NOT NULL,
-			email TEXT UNIQUE NOT NULL,
-			password_hash TEXT NOT NULL,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`,
-		`CREATE TABLE IF NOT EXISTS favorites (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			user_id INTEGER NOT NULL,
-			apod_date TEXT NOT NULL,
-			image_url TEXT,
-			title TEXT,
-			saved_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			UNIQUE(user_id, apod_date))`,
-		`CREATE TABLE IF NOT EXISTS history (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			user_id INTEGER NOT NULL,
-			apod_date TEXT NOT NULL,
-			title TEXT,
-			viewed_at DATETIME DEFAULT CURRENT_TIMESTAMP)`,
-		`CREATE TABLE IF NOT EXISTS apod_cache (
-			date TEXT PRIMARY KEY,
-			title TEXT,
-			explanation TEXT,
-			image_url TEXT,
-			media_type TEXT,
-			hd_url TEXT,
-			stored_at DATETIME DEFAULT CURRENT_TIMESTAMP)`,
-		`CREATE TABLE IF NOT EXISTS comments (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			user_id INTEGER NOT NULL,
-			image_date TEXT,
-			comment_text TEXT,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`,
-		`CREATE TABLE IF NOT EXISTS ratings (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			user_id INTEGER NOT NULL,
-			image_date TEXT,
-			rating INTEGER CHECK(rating BETWEEN 1 AND 5),
-			UNIQUE(user_id, image_date))`,
-		`CREATE TABLE IF NOT EXISTS image_stats (
-			image_date TEXT PRIMARY KEY,
-			views INTEGER DEFAULT 0,
-			likes INTEGER DEFAULT 0,
-			comments INTEGER DEFAULT 0)`,
-	}
-	for _, stmt := range stmts {
-		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("store: create schema: %w", err)
-		}
-	}
-	return nil
-}
 
 // ---- users ---------------------------------------------------------------
 
@@ -162,6 +106,79 @@ func (s *Store) UserByLogin(ctx context.Context, login string) (User, error) {
 	return u, nil
 }
 
+// UserByID returns the user with the given ID.
+func (s *Store) UserByID(ctx context.Context, id int64) (User, error) {
+	var u User
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, username, password_hash FROM users WHERE id = ?`, id).
+		Scan(&u.ID, &u.Username, &u.PasswordHash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return User{}, ErrNotFound
+	}
+	if err != nil {
+		return User{}, fmt.Errorf("store: user by id: %w", err)
+	}
+	return u, nil
+}
+
+// UpdatePasswordHash replaces a user's stored password hash (used to
+// upgrade legacy hashes to bcrypt on login).
+func (s *Store) UpdatePasswordHash(ctx context.Context, userID int64, hash string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE users SET password_hash = ? WHERE id = ?`, hash, userID)
+	if err != nil {
+		return fmt.Errorf("store: update password hash: %w", err)
+	}
+	return nil
+}
+
+// ---- sessions ------------------------------------------------------------
+
+// CreateSession stores a session. tokenHash must be a keyed hash of the
+// session token, never the token itself.
+func (s *Store) CreateSession(ctx context.Context, tokenHash string, userID int64, now, expires time.Time) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)`,
+		tokenHash, userID, now.Unix(), expires.Unix())
+	if err != nil {
+		return fmt.Errorf("store: create session: %w", err)
+	}
+	return nil
+}
+
+// SessionUser returns the user ID for an unexpired session, or ErrNotFound.
+func (s *Store) SessionUser(ctx context.Context, tokenHash string, now time.Time) (int64, error) {
+	var userID int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT user_id FROM sessions WHERE token_hash = ? AND expires_at > ?`,
+		tokenHash, now.Unix()).Scan(&userID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("store: session user: %w", err)
+	}
+	return userID, nil
+}
+
+// DeleteSession removes one session (logout). Deleting a missing session
+// is not an error.
+func (s *Store) DeleteSession(ctx context.Context, tokenHash string) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE token_hash = ?`, tokenHash); err != nil {
+		return fmt.Errorf("store: delete session: %w", err)
+	}
+	return nil
+}
+
+// DeleteExpiredSessions purges sessions past their expiry and reports how
+// many it removed.
+func (s *Store) DeleteExpiredSessions(ctx context.Context, now time.Time) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE expires_at <= ?`, now.Unix())
+	if err != nil {
+		return 0, fmt.Errorf("store: delete expired sessions: %w", err)
+	}
+	return res.RowsAffected()
+}
+
 // ---- favorites -----------------------------------------------------------
 
 // Favorite is an APOD entry a user has saved.
@@ -189,6 +206,21 @@ func (s *Store) AddFavorite(ctx context.Context, userID int64, f Favorite) error
 		}
 		return bumpStat(ctx, tx, f.Date, "likes")
 	})
+}
+
+// DeleteFavorite removes one of a user's favorites. It returns ErrNotFound
+// if the user had no favorite for that date. The user_id condition means a
+// user can only ever delete their own favorites.
+func (s *Store) DeleteFavorite(ctx context.Context, userID int64, date string) error {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM favorites WHERE user_id = ? AND apod_date = ?`, userID, date)
+	if err != nil {
+		return fmt.Errorf("store: delete favorite: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // ListFavorites returns a user's favorites, newest first.

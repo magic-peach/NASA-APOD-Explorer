@@ -1,65 +1,136 @@
 package httpapi
 
 import (
+	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"net/http"
+	"net/mail"
+	"regexp"
 	"strings"
-	"sync"
+	"time"
+
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/magic-peach/NASA-APOD-Explorer/internal/store"
 )
 
-// sessionStore maps opaque bearer tokens to user IDs, in memory.
-// (Phase 4 replaces this with HTTP-only cookies backed by SQLite.)
-type sessionStore struct {
-	mu    sync.RWMutex
-	items map[string]int64
+// sessionCookieName is the cookie holding the opaque session token.
+const sessionCookieName = "apod_session"
+
+// Password rules. bcrypt only looks at the first 72 bytes of its input, so
+// longer passwords are rejected rather than silently truncated.
+const (
+	minPasswordLen = 8
+	maxPasswordLen = 72
+)
+
+var validUsername = regexp.MustCompile(`^[A-Za-z0-9_.-]{3,32}$`)
+
+// ---- passwords -----------------------------------------------------------
+
+// hashPassword hashes a new password with bcrypt. bcrypt is deliberately
+// slow (tunable via the cost) and salts each hash randomly, which makes
+// brute-forcing a stolen database far more expensive than a fast hash like
+// SHA-256.
+func (s *Server) hashPassword(password string) (string, error) {
+	h, err := bcrypt.GenerateFromPassword([]byte(password), s.BcryptCost)
+	return string(h), err
 }
 
-func newSessionStore() *sessionStore {
-	return &sessionStore{items: make(map[string]int64)}
+// checkPassword reports whether password matches the stored hash, and
+// whether the stored hash uses the legacy scheme and should be upgraded.
+func (s *Server) checkPassword(stored, password string) (ok, legacy bool) {
+	if strings.HasPrefix(stored, "$2") { // bcrypt hashes start with $2a$, $2b$ or $2y$
+		return bcrypt.CompareHashAndPassword([]byte(stored), []byte(password)) == nil, false
+	}
+	// Legacy: hex(SHA-256(salt + ":" + password)). Compare in constant time
+	// so response timing doesn't leak how many characters matched.
+	sum := sha256.Sum256([]byte(s.LegacyPasswordSalt + ":" + password))
+	return subtle.ConstantTimeCompare([]byte(hex.EncodeToString(sum[:])), []byte(stored)) == 1, true
 }
 
-func (s *sessionStore) create(userID int64) string {
-	b := make([]byte, 24)
-	_, _ = rand.Read(b) // crypto/rand.Read never returns an error on supported platforms
-	token := hex.EncodeToString(b)
-	s.mu.Lock()
-	s.items[token] = userID
-	s.mu.Unlock()
-	return token
+// dummyHash is compared against when a login names an unknown user, so a
+// miss costs the same bcrypt time as a wrong password and response times
+// don't reveal which usernames exist.
+func (s *Server) dummyHash() []byte {
+	s.dummyOnce.Do(func() {
+		s.dummy, _ = bcrypt.GenerateFromPassword([]byte("not-a-real-password"), s.BcryptCost)
+	})
+	return s.dummy
 }
 
-func (s *sessionStore) lookup(token string) (int64, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	id, ok := s.items[token]
-	return id, ok
+// ---- sessions ------------------------------------------------------------
+
+// hashToken returns HMAC-SHA256(secret, token). Only this goes in the
+// database: a leaked sessions table can't be turned back into cookies
+// without also stealing SESSION_SECRET.
+func (s *Server) hashToken(token string) string {
+	mac := hmac.New(sha256.New, s.SessionSecret)
+	mac.Write([]byte(token))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
-func (s *sessionStore) delete(token string) {
-	s.mu.Lock()
-	delete(s.items, token)
-	s.mu.Unlock()
+// startSession creates a session for userID and sets the cookie.
+func (s *Server) startSession(ctx context.Context, w http.ResponseWriter, userID int64) error {
+	raw := make([]byte, 32) // 256 bits from the OS CSPRNG: unguessable
+	if _, err := rand.Read(raw); err != nil {
+		return err
+	}
+	token := base64.RawURLEncoding.EncodeToString(raw)
+
+	now := s.Now()
+	expires := now.Add(s.SessionTTL)
+	if err := s.Store.CreateSession(ctx, s.hashToken(token), userID, now, expires); err != nil {
+		return err
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    token,
+		Path:     "/",
+		Expires:  expires,
+		MaxAge:   int(s.SessionTTL.Seconds()),
+		HttpOnly: true,                 // JavaScript can't read it, so XSS can't steal it
+		Secure:   s.CookieSecure,       // only sent over HTTPS
+		SameSite: http.SameSiteLaxMode, // not sent on cross-site POSTs, which blunts CSRF
+	})
+	return nil
 }
 
-// hashPassword is the original salted SHA-256 scheme, kept unchanged for
-// now. (Phase 4 replaces it with bcrypt.)
-func (s *Server) hashPassword(password string) string {
-	sum := sha256.Sum256([]byte(s.PasswordSalt + ":" + password))
-	return hex.EncodeToString(sum[:])
+// clearSessionCookie tells the browser to delete the cookie.
+func (s *Server) clearSessionCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   s.CookieSecure,
+		SameSite: http.SameSiteLaxMode,
+	})
 }
 
-func bearerToken(r *http.Request) string {
-	return strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-}
-
-// currentUser returns the logged-in user's ID, if any.
+// currentUser returns the logged-in user's ID, if the request carries a
+// valid, unexpired session cookie.
 func (s *Server) currentUser(r *http.Request) (int64, bool) {
-	return s.sessions.lookup(bearerToken(r))
+	c, err := r.Cookie(sessionCookieName)
+	if err != nil || c.Value == "" {
+		return 0, false
+	}
+	userID, err := s.Store.SessionUser(r.Context(), s.hashToken(c.Value), s.Now())
+	if err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			s.log(r).Warn("session lookup failed", "err", err)
+		}
+		return 0, false
+	}
+	return userID, true
 }
 
 // authedHandler is a handler that receives the authenticated user's ID.
@@ -79,17 +150,63 @@ func (s *Server) requireAuth(next authedHandler) http.HandlerFunc {
 	}
 }
 
+// purgeExpiredSessions deletes expired sessions every hour until ctx ends.
+func (s *Server) purgeExpiredSessions(ctx context.Context) {
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if n, err := s.Store.DeleteExpiredSessions(ctx, s.Now()); err != nil {
+				s.Logger.Warn("purging expired sessions failed", "err", err)
+			} else if n > 0 {
+				s.Logger.Info("purged expired sessions", "count", n)
+			}
+		}
+	}
+}
+
+// ---- handlers ------------------------------------------------------------
+
+// userResponse is what the API reveals about the logged-in user.
+type userResponse struct {
+	ID       int64  `json:"id"`
+	Username string `json:"username"`
+}
+
+// handleSignup creates an account and logs the new user straight in.
 func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Username string `json:"username"`
 		Email    string `json:"email"`
 		Password string `json:"password"`
 	}
-	if err := decodeJSON(w, r, &in); err != nil || in.Username == "" || in.Email == "" || len(in.Password) < 6 {
-		writeError(w, badRequest(codeBadRequest, "username, email and a password of at least 6 characters are required"))
+	if err := decodeJSON(w, r, &in); err != nil {
+		writeError(w, badRequest(codeBadRequest, "request body must be valid JSON"))
 		return
 	}
-	_, err := s.Store.CreateUser(r.Context(), in.Username, in.Email, s.hashPassword(in.Password))
+	in.Username, in.Email = strings.TrimSpace(in.Username), strings.TrimSpace(in.Email)
+
+	switch {
+	case !validUsername.MatchString(in.Username):
+		writeError(w, badRequest(codeBadRequest, "username must be 3-32 letters, digits, '.', '_' or '-'"))
+		return
+	case !isEmail(in.Email):
+		writeError(w, badRequest(codeBadRequest, "please enter a valid email address"))
+		return
+	case len(in.Password) < minPasswordLen || len(in.Password) > maxPasswordLen:
+		writeError(w, badRequest(codeBadRequest, "password must be 8 to 72 characters"))
+		return
+	}
+
+	hash, err := s.hashPassword(in.Password)
+	if err != nil {
+		s.internalError(w, r, "hash password", err)
+		return
+	}
+	userID, err := s.Store.CreateUser(r.Context(), in.Username, strings.ToLower(in.Email), hash)
 	if errors.Is(err, store.ErrConflict) {
 		writeErr(w, http.StatusConflict, codeConflict, "that username or email is already registered")
 		return
@@ -98,29 +215,88 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "signup", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	if err := s.startSession(r.Context(), w, userID); err != nil {
+		s.internalError(w, r, "start session", err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, userResponse{ID: userID, Username: in.Username})
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Username string `json:"username"`
+		Username string `json:"username"` // username or email
 		Password string `json:"password"`
 	}
 	if err := decodeJSON(w, r, &in); err != nil {
 		writeError(w, badRequest(codeBadRequest, "request body must be valid JSON"))
 		return
 	}
-	u, err := s.Store.UserByLogin(r.Context(), in.Username)
-	if err != nil || u.PasswordHash != s.hashPassword(in.Password) {
-		// Same message for "no such user" and "wrong password" so the
+
+	u, err := s.Store.UserByLogin(r.Context(), strings.TrimSpace(in.Username))
+	if errors.Is(err, store.ErrNotFound) {
+		// Burn the same bcrypt time as a real check (see dummyHash).
+		_ = bcrypt.CompareHashAndPassword(s.dummyHash(), []byte(in.Password))
+		writeErr(w, http.StatusUnauthorized, codeUnauthorized, "invalid username or password")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "login lookup", err)
+		return
+	}
+
+	ok, legacy := s.checkPassword(u.PasswordHash, in.Password)
+	if !ok {
+		// Same message for unknown user and wrong password, so the
 		// response doesn't reveal which usernames exist.
 		writeErr(w, http.StatusUnauthorized, codeUnauthorized, "invalid username or password")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"token": s.sessions.create(u.ID)})
+	if legacy {
+		// We have the plaintext right now, so this is the one chance to
+		// move this account onto bcrypt transparently.
+		if hash, err := s.hashPassword(in.Password); err == nil {
+			if err := s.Store.UpdatePasswordHash(r.Context(), u.ID, hash); err != nil {
+				s.log(r).Warn("upgrading legacy password hash failed", "err", err)
+			}
+		}
+	}
+
+	if err := s.startSession(r.Context(), w, u.ID); err != nil {
+		s.internalError(w, r, "start session", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, userResponse{ID: u.ID, Username: u.Username})
 }
 
+// handleLogout deletes the server-side session (so the token is dead even
+// if someone copied it) and clears the cookie. Logging out twice is fine.
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	s.sessions.delete(bearerToken(r))
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	if c, err := r.Cookie(sessionCookieName); err == nil && c.Value != "" {
+		if err := s.Store.DeleteSession(r.Context(), s.hashToken(c.Value)); err != nil {
+			s.internalError(w, r, "logout", err)
+			return
+		}
+	}
+	s.clearSessionCookie(w)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleMe tells the frontend who is logged in. It is needed because the
+// HttpOnly session cookie is invisible to JavaScript.
+func (s *Server) handleMe(w http.ResponseWriter, r *http.Request, userID int64) {
+	u, err := s.Store.UserByID(r.Context(), userID)
+	if err != nil {
+		s.internalError(w, r, "load user", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, userResponse{ID: u.ID, Username: u.Username})
+}
+
+// isEmail is a pragmatic check: one address, no display name, has a domain.
+func isEmail(s string) bool {
+	if len(s) > 254 {
+		return false
+	}
+	a, err := mail.ParseAddress(s)
+	return err == nil && a.Address == s && strings.Contains(s[strings.LastIndex(s, "@")+1:], ".")
 }
