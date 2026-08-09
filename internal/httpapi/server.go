@@ -140,6 +140,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/favorites", s.requireAuth(s.handleAddFavorite))
 	mux.HandleFunc("DELETE /api/favorites/{date}", s.requireAuth(s.handleDeleteFavorite))
 	mux.HandleFunc("GET /api/history", s.requireAuth(s.handleHistory))
+	mux.HandleFunc("POST /api/history", s.requireAuth(s.handleRecordView))
 	mux.HandleFunc("GET /api/comments", s.handleListComments)
 	mux.HandleFunc("POST /api/comments", s.requireAuth(s.handleAddComment))
 	mux.HandleFunc("GET /api/ratings", s.handleAverageRating)
