@@ -17,14 +17,33 @@ import (
 // DefaultBaseURL is the production APOD endpoint.
 const DefaultBaseURL = "https://api.nasa.gov/planetary/apod"
 
-// Item is one APOD entry as returned by NASA.
+// Item is one APOD entry as returned by NASA, plus two flags we add.
 type Item struct {
-	Date        string `json:"date"`
-	Title       string `json:"title"`
-	Explanation string `json:"explanation"`
-	URL         string `json:"url"`
-	MediaType   string `json:"media_type"`
-	HDURL       string `json:"hdurl,omitempty"`
+	Date         string `json:"date"`
+	Title        string `json:"title"`
+	Explanation  string `json:"explanation"`
+	URL          string `json:"url"`
+	MediaType    string `json:"media_type"` // "image" or "video"
+	HDURL        string `json:"hdurl,omitempty"`
+	Copyright    string `json:"copyright,omitempty"`     // credit line; absent for public-domain NASA images
+	ThumbnailURL string `json:"thumbnail_url,omitempty"` // video poster image (requested with thumbs=true)
+
+	// Placeholder is set when NASA returned its generic "NASA Science" page
+	// instead of the real entry (see IsPlaceholder).
+	Placeholder bool `json:"placeholder,omitempty"`
+	// Sample is set on built-in demo entries (see DemoClient).
+	Sample bool `json:"sample,omitempty"`
+}
+
+// IsPlaceholder reports whether it is NASA's generic stand-in rather than a
+// real APOD. Since APOD moved to science.nasa.gov, the API has been
+// answering many dates with the site's generic page: title "NASA Science",
+// a boilerplate "Discover the cosmos!" explanation and the NASA logo as the
+// image. This is a heuristic on those exact markers, so it is easy to
+// remove once NASA fixes the API.
+func IsPlaceholder(it Item) bool {
+	return strings.HasPrefix(it.Explanation, "Discover the cosmos!") ||
+		(it.Title == "NASA Science" && strings.Contains(it.URL, "/nasa-child/assets/"))
 }
 
 // Query describes which APOD entries to fetch. Exactly one form is used,
@@ -89,6 +108,7 @@ type HTTPClient struct {
 func (c *HTTPClient) Fetch(ctx context.Context, q Query) ([]Item, error) {
 	params := q.values()
 	params.Set("api_key", c.APIKey)
+	params.Set("thumbs", "true") // include thumbnail_url for video entries
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"?"+params.Encode(), nil)
 	if err != nil {
@@ -114,7 +134,14 @@ func (c *HTTPClient) Fetch(ctx context.Context, q Query) ([]Item, error) {
 	if resp.StatusCode >= http.StatusBadRequest {
 		return nil, fmt.Errorf("apod: upstream status %d", resp.StatusCode)
 	}
-	return decode(body)
+	items, err := decode(body)
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		items[i].Placeholder = IsPlaceholder(items[i])
+	}
+	return items, nil
 }
 
 // decode accepts either a JSON object or a JSON array of items.
