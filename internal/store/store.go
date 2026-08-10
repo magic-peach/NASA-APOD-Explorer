@@ -367,9 +367,11 @@ func (s *Store) CachedAPOD(ctx context.Context, date string) (apod.Item, error) 
 	var it apod.Item
 	err := s.db.QueryRowContext(ctx, `
 		SELECT date, COALESCE(title, ''), COALESCE(explanation, ''), COALESCE(image_url, ''),
-		       COALESCE(media_type, ''), COALESCE(hd_url, '')
+		       COALESCE(media_type, ''), COALESCE(hd_url, ''), COALESCE(copyright, ''),
+		       COALESCE(thumbnail_url, '')
 		FROM apod_cache WHERE date = ?`, date).
-		Scan(&it.Date, &it.Title, &it.Explanation, &it.URL, &it.MediaType, &it.HDURL)
+		Scan(&it.Date, &it.Title, &it.Explanation, &it.URL, &it.MediaType, &it.HDURL,
+			&it.Copyright, &it.ThumbnailURL)
 	if errors.Is(err, sql.ErrNoRows) {
 		return apod.Item{}, ErrNotFound
 	}
@@ -379,21 +381,27 @@ func (s *Store) CachedAPOD(ctx context.Context, date string) (apod.Item, error) 
 	return it, nil
 }
 
-// SaveAPOD upserts entries into the persistent APOD cache.
+// SaveAPOD upserts entries into the persistent APOD cache. A past date's
+// entry never changes, so it is kept forever; that is exactly why NASA
+// placeholders and demo samples are skipped: storing one would hide the
+// real entry permanently.
 func (s *Store) SaveAPOD(ctx context.Context, items []apod.Item) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		for _, it := range items {
-			if it.Date == "" {
+			if it.Date == "" || it.Placeholder || it.Sample {
 				continue
 			}
 			if _, err := tx.ExecContext(ctx, `
-				INSERT INTO apod_cache (date, title, explanation, image_url, media_type, hd_url)
-				VALUES (?, ?, ?, ?, ?, ?)
+				INSERT INTO apod_cache (date, title, explanation, image_url, media_type, hd_url,
+				                        copyright, thumbnail_url)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 				ON CONFLICT (date) DO UPDATE SET
 					title = excluded.title, explanation = excluded.explanation,
 					image_url = excluded.image_url, media_type = excluded.media_type,
-					hd_url = excluded.hd_url, stored_at = CURRENT_TIMESTAMP`,
-				it.Date, it.Title, it.Explanation, it.URL, it.MediaType, it.HDURL); err != nil {
+					hd_url = excluded.hd_url, copyright = excluded.copyright,
+					thumbnail_url = excluded.thumbnail_url, stored_at = CURRENT_TIMESTAMP`,
+				it.Date, it.Title, it.Explanation, it.URL, it.MediaType, it.HDURL,
+				it.Copyright, it.ThumbnailURL); err != nil {
 				return fmt.Errorf("store: save apod: %w", err)
 			}
 		}

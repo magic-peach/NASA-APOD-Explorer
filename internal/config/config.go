@@ -43,6 +43,10 @@ type Config struct {
 	// headers like X-Forwarded-For are trivially spoofed.
 	TrustedProxyHeader string
 
+	// DemoMode serves built-in sample images instead of calling NASA
+	// (DEMO_MODE=1). Useful while NASA's APOD API returns placeholders.
+	DemoMode bool
+
 	// LogFormat is "text" (human-friendly, default) or "json" (LOG_FORMAT).
 	LogFormat string
 
@@ -120,6 +124,11 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 		return Config{}, fmt.Errorf("config: COOKIE_SECURE must be true or false")
 	}
 
+	demoMode, err := strconv.ParseBool(get("DEMO_MODE", "false"))
+	if err != nil {
+		return Config{}, fmt.Errorf("config: DEMO_MODE must be true/false or 1/0")
+	}
+
 	secret, generated := []byte(getenv("SESSION_SECRET")), false
 	switch {
 	case len(secret) == 0:
@@ -140,6 +149,7 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 		RateLimitBurst:         burst,
 		TrustedProxyHeader:     getenv("TRUSTED_PROXY_HEADER"),
 		LogFormat:              logFormat,
+		DemoMode:               demoMode,
 		SessionSecret:          secret,
 		SessionSecretGenerated: generated,
 		SessionTTL:             sessionTTL,

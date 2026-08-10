@@ -1,111 +1,272 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>NASA APOD Explorer</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Browse NASA's Astronomy Picture of the Day archive, back to June 1995." />
+    <meta name="color-scheme" content="dark light" />
+    <title>APOD Explorer</title>
     <link rel="stylesheet" href="styles.css" />
+    <script type="module" src="js/app.js"></script>
   </head>
   <body>
-    <header>
-      <h1>NASA APOD Explorer</h1>
-      <div class="auth-row">
-        <input id="authUser" placeholder="username or email" />
-        <input id="authPass" type="password" placeholder="password" />
-        <button onclick="signup()">Sign up</button>
-        <button onclick="login()">Log in</button>
-        <button onclick="logout()">Log out</button>
-        <span id="authStatus">Not logged in</span>
-      </div>
-      <div class="controls">
-        <input type="date" id="dateInput" />
-        <button onclick="searchByDate()">Search Date</button>
-        <button onclick="showFavorites()">⭐ My Favorites</button>
-        <button onclick="showHistory()">🕘 Recently Viewed</button>
-        <button onclick="toggleTheme()">🌙 Theme</button>
-      </div>
-      <div class="range-controls">
-        <input type="date" id="startDate" />
-        <input type="date" id="endDate" />
-        <button onclick="searchRange()">Search Range</button>
-      </div>
-      <div class="timeline-controls">
-        <label for="timelineYear">Timeline Mode (1995-2025):</label>
-        <input type="range" id="timelineYear" min="1995" max="2025" value="2025" />
-        <span id="timelineYearLabel">2025</span>
-        <button onclick="loadTimelineDate()">Load Year Snapshot</button>
+    <!-- Decorative background; hidden from assistive technology. -->
+    <canvas id="starfield" aria-hidden="true"></canvas>
+
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <a class="wordmark" href="/" aria-label="APOD Explorer, home">APOD<span>Explorer</span></a>
+      <nav aria-label="Main">
+        <ul class="nav-list">
+          <li><button type="button" class="nav-link" data-view="explore" aria-current="page">Explore</button></li>
+          <li><button type="button" class="nav-link" data-view="favorites">Favorites <span class="count" id="fav-count"></span></button></li>
+          <li><button type="button" class="nav-link" data-view="history" id="nav-history" hidden>History</button></li>
+        </ul>
+      </nav>
+      <div class="header-actions">
+        <button type="button" class="icon-button" id="theme-toggle" aria-pressed="false" aria-label="Use light theme">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="5" /><path d="M12 1v3M12 20v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M1 12h3M20 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1" /></svg>
+        </button>
+        <span id="user-name" class="user-name" hidden></span>
+        <button type="button" class="button button-quiet" id="login-button">Log in</button>
+        <button type="button" class="button button-quiet" id="logout-button" hidden>Log out</button>
       </div>
     </header>
 
-    <section class="facts-panel">
-      <h2>🚀 Space Facts</h2>
-      <div id="facts">Loading...</div>
-    </section>
+    <div id="notice" class="notice" role="status" hidden></div>
 
-    <section class="facts-panel">
-      <h2>🧠 AI Curated Collections</h2>
-      <button onclick="generateCollections()">Generate Collections From Current Image</button>
-      <div id="collectionsOutput" class="output-box"></div>
-    </section>
+    <main id="main" tabindex="-1">
+      <!-- ===== Explore view ===== -->
+      <div id="view-explore" class="view">
+        <section class="hero" aria-labelledby="hero-title" aria-busy="true">
+          <div class="hero-media" id="hero-media"><div class="skeleton skeleton-hero"></div></div>
+          <div class="hero-text">
+            <p class="hero-kicker" id="hero-kicker">Today's picture</p>
+            <h1 id="hero-title" class="hero-title"><span class="skeleton skeleton-line wide"></span></h1>
+            <p class="hero-date" id="hero-date"></p>
+            <p class="hero-excerpt" id="hero-excerpt"></p>
+            <div class="hero-actions" id="hero-actions" hidden>
+              <button type="button" class="button button-primary" id="hero-open">View full picture</button>
+              <button type="button" class="button fav-button" id="hero-fav" aria-pressed="false">Save to favorites</button>
+            </div>
+            <div class="inline-error" id="hero-error" hidden></div>
+          </div>
+        </section>
 
-    <div id="loader" class="loader"></div>
-    <main id="gallery" class="gallery-grid"></main>
+        <section class="strip" aria-labelledby="strip-title">
+          <h2 id="strip-title" class="section-title">On this day</h2>
+          <p class="section-note" id="strip-note">The same date in earlier years.</p>
+          <ol class="strip-list" id="strip-list"></ol>
+        </section>
 
-    <div id="modal" class="modal hidden">
-      <div class="modal-content">
-        <button class="close" onclick="closeModal()">×</button>
-        <h2 id="modalTitle"></h2>
-        <p id="modalDate"></p>
-        <img id="modalImg" alt="APOD" />
-        <p id="modalDesc"></p>
+        <section class="panel search" aria-labelledby="search-title">
+          <h2 id="search-title" class="section-title">Find a picture</h2>
+          <div class="search-grid">
+            <form id="date-form" class="search-form">
+              <label for="date-input">A single day</label>
+              <div class="field-row">
+                <input type="date" id="date-input" name="date" required />
+                <button type="submit" class="button">Show day</button>
+              </div>
+            </form>
+            <form id="range-form" class="search-form">
+              <fieldset>
+                <legend>A date range, up to 30 days</legend>
+                <div class="field-row">
+                  <label class="visually-hidden" for="start-input">From</label>
+                  <input type="date" id="start-input" name="start" required />
+                  <span aria-hidden="true">to</span>
+                  <label class="visually-hidden" for="end-input">To</label>
+                  <input type="date" id="end-input" name="end" required />
+                  <button type="submit" class="button">Show range</button>
+                </div>
+              </fieldset>
+            </form>
+            <form id="year-form" class="search-form">
+              <label for="year-input">Today's date in another year: <output id="year-output" for="year-input"></output></label>
+              <div class="field-row">
+                <input type="range" id="year-input" name="year" min="1995" step="1" />
+                <button type="submit" class="button">Show year</button>
+              </div>
+            </form>
+          </div>
+          <p class="form-error" id="search-error" role="alert" hidden></p>
+        </section>
 
-        <div class="segment-row">
-          <span>Explain this image:</span>
-          <button onclick="generateRewrite('Beginner')">Beginner</button>
-          <button onclick="generateRewrite('Student')">Student</button>
-          <button onclick="generateRewrite('Expert')">Expert</button>
-          <button onclick="generateELI10()">Explain Like I'm 10</button>
-        </div>
-        <div id="rewriteOutput" class="output-box"></div>
-
-        <div class="segment-row">
-          <input id="chatQuestion" placeholder="Ask a question about this image..." />
-          <button onclick="askImageQuestion()">Ask</button>
-          <button onclick="startVoiceQuestion()">🎤 Ask the universe</button>
-        </div>
-        <div id="chatOutput" class="output-box"></div>
-
-        <div class="segment-row wrap">
-          <button onclick="generateHotspots()">Highlight Objects</button>
-          <button onclick="generateDidYouKnow()">Did You Know?</button>
-          <button onclick="generateSimilar()">Compare Similar Images</button>
-          <button onclick="generateDistance()">Space Distance Visualizer</button>
-          <button onclick="generateQuiz()">Daily Astronomy Quiz</button>
-          <button onclick="generateStory()">AI Story Mode</button>
-          <button onclick="generateLesson()">Space Learning Mode</button>
-          <button onclick="generateCaptions()">Generate Captions</button>
-          <button onclick="generateTimelineContext()">Timeline Context</button>
-        </div>
-        <input id="distanceInput" placeholder="Optional distance e.g. 2500 light years" />
-        <div id="featureOutput" class="output-box"></div>
-
-        <div class="modal-actions">
-          <button onclick="saveFavorite()">⭐ Save Favorite</button>
-          <label>Rate:
-            <select id="ratingSelect">
-              <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option>
-            </select>
-          </label>
-          <button onclick="submitRating()">Submit Rating</button>
-          <a id="downloadBtn" download target="_blank" rel="noreferrer">Download Image</a>
-        </div>
-        <h3>Comments</h3>
-        <div id="comments"></div>
-        <input id="commentInput" placeholder="Add a comment" />
-        <button onclick="postComment()">Post Comment</button>
+        <section class="facts" aria-labelledby="facts-title">
+          <h2 id="facts-title" class="visually-hidden">Solar system in numbers</h2>
+          <dl class="facts-list" id="facts-list"></dl>
+        </section>
       </div>
-    </div>
 
-    <script src="script.js"></script>
+      <!-- ===== Gallery (explore, search results and favorites share it) ===== -->
+      <section class="gallery-section" id="gallery-section" aria-labelledby="gallery-title">
+        <div class="gallery-head">
+          <h2 id="gallery-title" class="section-title">More from the archive</h2>
+          <button type="button" class="button button-quiet" id="back-to-explore" hidden>Back to explore</button>
+        </div>
+        <p class="section-note" id="gallery-note">Random days from three decades of pictures.</p>
+        <ul class="gallery" id="gallery" role="list"></ul>
+        <div class="gallery-empty" id="gallery-empty" hidden></div>
+        <div class="inline-error" id="gallery-error" hidden></div>
+        <div class="gallery-foot">
+          <button type="button" class="button" id="load-more">Show more pictures</button>
+        </div>
+        <div id="sentinel" aria-hidden="true"></div>
+      </section>
+
+      <!-- ===== History view ===== -->
+      <section class="history" id="view-history" aria-labelledby="history-title" hidden>
+        <h2 id="history-title" class="section-title">Recently viewed</h2>
+        <ol class="history-list" id="history-list"></ol>
+        <div class="gallery-empty" id="history-empty" hidden></div>
+        <div class="inline-error" id="history-error" hidden></div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>
+        Pictures and explanations from NASA's
+        <a href="https://science.nasa.gov/apod/" rel="noopener" target="_blank">Astronomy Picture of the Day</a>.
+        Each image belongs to the credited photographer unless marked public domain.
+      </p>
+    </footer>
+
+    <!-- ===== Picture viewer ===== -->
+    <dialog id="viewer" class="viewer" aria-labelledby="viewer-title">
+      <div class="viewer-shell">
+        <div class="viewer-stage">
+          <button type="button" class="viewer-nav prev" id="viewer-prev" aria-label="Previous picture" aria-keyshortcuts="ArrowLeft">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
+          </button>
+          <div class="viewer-media" id="viewer-media"></div>
+          <button type="button" class="viewer-nav next" id="viewer-next" aria-label="Next picture" aria-keyshortcuts="ArrowRight">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7" /></svg>
+          </button>
+        </div>
+
+        <article class="viewer-info">
+          <button type="button" class="icon-button viewer-close" id="viewer-close" aria-label="Close" aria-keyshortcuts="Escape">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
+          <p class="viewer-date" id="viewer-date"></p>
+          <h2 class="viewer-title" id="viewer-title"></h2>
+          <p class="viewer-credit" id="viewer-credit"></p>
+          <p class="flag" id="viewer-flag" hidden></p>
+
+          <div class="viewer-actions">
+            <button type="button" class="button fav-button" id="viewer-fav" aria-pressed="false">Save to favorites</button>
+            <button type="button" class="button" id="viewer-hd" aria-pressed="false" hidden>Show HD</button>
+            <button type="button" class="button" id="viewer-share">Copy link</button>
+            <a class="button" id="viewer-original" target="_blank" rel="noopener">Open original</a>
+          </div>
+
+          <div class="explanation" id="viewer-explanation"></div>
+
+          <section class="viewer-block" aria-labelledby="rating-title">
+            <h3 id="rating-title">Your rating</h3>
+            <form id="rating-form" class="rating">
+              <fieldset>
+                <legend class="visually-hidden">Rate this picture from 1 to 5 stars</legend>
+                <div class="stars" id="stars"></div>
+              </fieldset>
+              <p class="rating-average" id="rating-average"></p>
+            </form>
+          </section>
+
+          <section class="viewer-block" aria-labelledby="comments-title">
+            <h3 id="comments-title">Comments</h3>
+            <ol class="comments" id="comments"></ol>
+            <form id="comment-form" class="comment-form">
+              <label for="comment-input" class="visually-hidden">Add a comment</label>
+              <textarea id="comment-input" rows="2" maxlength="2000" placeholder="Add a comment" required></textarea>
+              <button type="submit" class="button">Post comment</button>
+            </form>
+            <button type="button" class="button button-quiet" id="comment-login" hidden>Log in to comment</button>
+          </section>
+
+          <details class="viewer-block tools" id="tools">
+            <summary>Learn more about this picture</summary>
+            <div class="tool-group">
+              <p class="tool-label" id="explain-label">Explain it for</p>
+              <div class="chip-row" role="group" aria-labelledby="explain-label">
+                <button type="button" class="chip" data-task="rewrite" data-level="Beginner">A beginner</button>
+                <button type="button" class="chip" data-task="rewrite" data-level="Student">A student</button>
+                <button type="button" class="chip" data-task="rewrite" data-level="Expert">An expert</button>
+                <button type="button" class="chip" data-task="eli10">A 10-year-old</button>
+              </div>
+            </div>
+            <form class="tool-group" id="ask-form">
+              <label class="tool-label" for="ask-input">Ask a question</label>
+              <div class="field-row">
+                <input type="text" id="ask-input" maxlength="300" placeholder="What makes the colours in this picture?" required />
+                <button type="submit" class="button">Ask</button>
+                <button type="button" class="icon-button" id="voice-button" aria-label="Ask by voice" hidden>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3" /><path d="M5 11a7 7 0 0014 0M12 18v4" /></svg>
+                </button>
+              </div>
+            </form>
+            <div class="tool-group">
+              <p class="tool-label" id="more-label">Or try</p>
+              <div class="chip-row" role="group" aria-labelledby="more-label">
+                <button type="button" class="chip" data-task="hotspots">Point out objects</button>
+                <button type="button" class="chip" data-task="facts">Fun facts</button>
+                <button type="button" class="chip" data-task="similar">Similar sights</button>
+                <button type="button" class="chip" data-task="timeline">Place in history</button>
+                <button type="button" class="chip" data-task="quiz">Quiz me</button>
+                <button type="button" class="chip" data-task="story">Tell it as a story</button>
+                <button type="button" class="chip" data-task="lesson">Mini lesson</button>
+                <button type="button" class="chip" data-task="captions">Write captions</button>
+                <button type="button" class="chip" data-task="collections">Suggest a collection</button>
+              </div>
+            </div>
+            <form class="tool-group" id="distance-form">
+              <label class="tool-label" for="distance-input">Put a distance in perspective</label>
+              <div class="field-row">
+                <input type="text" id="distance-input" maxlength="100" placeholder="e.g. 6,500 light-years" />
+                <button type="submit" class="button">Compare</button>
+              </div>
+            </form>
+            <div class="tool-output" id="tool-output" aria-live="polite"></div>
+          </details>
+        </article>
+      </div>
+    </dialog>
+
+    <!-- ===== Log in / create account ===== -->
+    <dialog id="auth" class="auth" aria-labelledby="auth-title">
+      <form id="auth-form" class="auth-form" novalidate>
+        <button type="button" class="icon-button auth-close" id="auth-close" aria-label="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+        </button>
+        <h2 id="auth-title">Log in</h2>
+        <p class="auth-lede" id="auth-lede">Log in to keep your favorites on every device.</p>
+
+        <label for="auth-username" id="auth-username-label">Username or email</label>
+        <input id="auth-username" name="username" autocomplete="username" required />
+
+        <div id="email-field" hidden>
+          <label for="auth-email">Email</label>
+          <input id="auth-email" name="email" type="email" autocomplete="email" />
+        </div>
+
+        <label for="auth-password">Password</label>
+        <input id="auth-password" name="password" type="password" autocomplete="current-password" required minlength="8" maxlength="72" aria-describedby="password-hint" />
+        <p class="hint" id="password-hint" hidden>At least 8 characters.</p>
+
+        <p class="form-error" id="auth-error" role="alert" hidden></p>
+        <button type="submit" class="button button-primary" id="auth-submit">Log in</button>
+        <p class="auth-switch">
+          <span id="auth-switch-text">New here?</span>
+          <button type="button" class="link-button" id="auth-switch">Create an account</button>
+        </p>
+      </form>
+    </dialog>
+
+    <!-- popover="manual" puts the toast in the browser's top layer, so it
+         shows above an open modal dialog (a z-index can't do that). -->
+    <div class="toast" id="toast" role="status" aria-live="polite" popover="manual"></div>
+    <p class="visually-hidden" id="announcer" aria-live="polite"></p>
   </body>
 </html>

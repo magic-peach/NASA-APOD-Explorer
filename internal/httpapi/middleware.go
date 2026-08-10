@@ -191,6 +191,38 @@ func withCORS(allowedOrigin string) middleware {
 	}
 }
 
+// ---- security headers ---------------------------------------------------
+
+// contentSecurityPolicy tells the browser what the page may load. The
+// frontend uses no inline scripts or styles, so script-src can be 'self'
+// only: even if an attacker injected HTML, the browser would refuse to run
+// their script. Images and video come from NASA hosts over HTTPS; video
+// embeds are limited to YouTube's privacy-enhanced domain and Vimeo.
+const contentSecurityPolicy = "default-src 'self'; " +
+	"script-src 'self'; " +
+	"style-src 'self'; " +
+	"img-src 'self' https: data:; " +
+	"media-src 'self' https:; " +
+	"frame-src https://www.youtube-nocookie.com https://player.vimeo.com; " +
+	"connect-src 'self'; " +
+	"object-src 'none'; " +
+	"base-uri 'self'; " +
+	"form-action 'self'; " +
+	"frame-ancestors 'none'"
+
+// withSecurityHeaders sets protective headers on every response.
+func withSecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Content-Security-Policy", contentSecurityPolicy)
+		h.Set("X-Content-Type-Options", "nosniff")                                  // don't guess content types
+		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")                 // don't leak full URLs to other sites
+		h.Set("X-Frame-Options", "DENY")                                            // legacy twin of frame-ancestors (clickjacking)
+		h.Set("Permissions-Policy", "camera=(), geolocation=(), microphone=(self)") // microphone: voice questions
+		next.ServeHTTP(w, r)
+	})
+}
+
 // ---- CSRF origin check --------------------------------------------------
 
 // withOriginCheck rejects state-changing requests (POST, PUT, PATCH,

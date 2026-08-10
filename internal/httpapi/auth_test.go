@@ -256,3 +256,34 @@ func TestCrossSiteWritesAreBlocked(t *testing.T) {
 		t.Errorf("same-origin POST: %d, want 200", code)
 	}
 }
+
+func TestHistoryRecordsOnlyExplicitViews(t *testing.T) {
+	ts := newTestServer(t, &fakeAPOD{})
+	c := signup(t, ts, "ada")
+
+	// Fetching entries (e.g. for a gallery) is not "viewing" them.
+	do(t, http.MethodGet, ts.URL+"/api/apod?count=3", c, "")
+
+	list := func() []store.HistoryEntry {
+		resp := do(t, http.MethodGet, ts.URL+"/api/history", c, "")
+		var out []store.HistoryEntry
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		return out
+	}
+	if got := list(); len(got) != 0 {
+		t.Fatalf("history after a gallery fetch = %+v, want empty", got)
+	}
+
+	if resp := do(t, http.MethodPost, ts.URL+"/api/history", c, `{"date":"2024-01-01","title":"Moon"}`); resp.StatusCode != 204 {
+		t.Fatalf("record view: %d", resp.StatusCode)
+	}
+	if got := list(); len(got) != 1 || got[0].Title != "Moon" {
+		t.Fatalf("history = %+v, want the one viewed entry", got)
+	}
+	if resp := do(t, http.MethodPost, ts.URL+"/api/history", nil, `{"date":"2024-01-01"}`); resp.StatusCode != 401 {
+		t.Errorf("anonymous record view: %d, want 401", resp.StatusCode)
+	}
+	if resp := do(t, http.MethodPost, ts.URL+"/api/history", c, `{"date":"2099-01-01"}`); resp.StatusCode != 400 {
+		t.Errorf("future date: %d, want 400", resp.StatusCode)
+	}
+}
