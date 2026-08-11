@@ -425,17 +425,24 @@ func (s *Store) inTx(ctx context.Context, fn func(*sql.Tx) error) error {
 	return tx.Commit()
 }
 
-// bumpStat increments one counter column of image_stats for date. column is
-// always a constant chosen by this package, never user input, so building
-// the SQL with it is safe; the date is still passed as a parameter.
+// bumpStatSQL holds one complete statement per counter. SQL placeholders
+// can only stand in for values, not column names, so instead of building
+// the SQL at runtime each column gets its own constant statement.
+var bumpStatSQL = map[string]string{
+	"views": `INSERT INTO image_stats (image_date, views) VALUES (?, 1)
+		ON CONFLICT (image_date) DO UPDATE SET views = views + 1`,
+	"likes": `INSERT INTO image_stats (image_date, likes) VALUES (?, 1)
+		ON CONFLICT (image_date) DO UPDATE SET likes = likes + 1`,
+	"comments": `INSERT INTO image_stats (image_date, comments) VALUES (?, 1)
+		ON CONFLICT (image_date) DO UPDATE SET comments = comments + 1`,
+}
+
+// bumpStat increments one counter column of image_stats for date.
 func bumpStat(ctx context.Context, tx *sql.Tx, date, column string) error {
-	switch column {
-	case "views", "likes", "comments":
-	default:
+	q, ok := bumpStatSQL[column]
+	if !ok {
 		return fmt.Errorf("store: unknown stat column %q", column)
 	}
-	q := fmt.Sprintf(`INSERT INTO image_stats (image_date, %[1]s) VALUES (?, 1)
-		ON CONFLICT (image_date) DO UPDATE SET %[1]s = %[1]s + 1`, column)
 	if _, err := tx.ExecContext(ctx, q, date); err != nil {
 		return fmt.Errorf("store: bump %s: %w", column, err)
 	}

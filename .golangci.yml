@@ -1,0 +1,30 @@
+version: "2"
+
+linters:
+  # The standard set (errcheck, govet, ineffassign, staticcheck, unused)
+  # plus a few that catch real bugs in HTTP/database code.
+  default: standard
+  enable:
+    - bodyclose     # unclosed HTTP response bodies leak connections
+    - errorlint     # use errors.Is/As, not == or type switches, on wrapped errors
+    - gosec         # common security mistakes
+    - misspell
+    - noctx         # HTTP requests without a context can't be cancelled
+    - rowserrcheck  # forgotten rows.Err() after iterating
+    - sqlclosecheck # unclosed sql.Rows/Stmt
+    - unconvert
+  settings:
+    gosec:
+      excludes:
+        - G104 # unhandled errors: errcheck already covers this
+  exclusions:
+    presets:
+      - std-error-handling
+    rules:
+      # Tests deliberately make simple HTTP calls without contexts.
+      - path: _test\.go
+        linters: [noctx, gosec, bodyclose]
+
+formatters:
+  enable:
+    - gofmt

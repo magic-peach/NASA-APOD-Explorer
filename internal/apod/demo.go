@@ -27,7 +27,7 @@ type demoEntry struct {
 	title, explanation, url, hdURL, mediaType, thumbnail string
 }
 
-const demoCredit = "NASA (public domain), via images.nasa.gov. Sample data."
+const demoAttribution = "NASA (public domain), via images.nasa.gov. Sample data."
 
 var demoEntries = []demoEntry{
 	{
@@ -111,7 +111,7 @@ func (d *DemoClient) Fetch(_ context.Context, q Query) ([]Item, error) {
 		span := int(today.Sub(firstDay).Hours() / 24)
 		items := make([]Item, q.Count)
 		for i := range items {
-			items[i] = demoItem(firstDay.AddDate(0, 0, rand.IntN(span+1)))
+			items[i] = demoItem(firstDay.AddDate(0, 0, rand.IntN(span+1))) //nolint:gosec // G404: random sample dates, not a security decision
 		}
 		return items, nil
 
@@ -133,7 +133,7 @@ func demoItem(t time.Time) Item {
 		HDURL:        e.hdURL,
 		MediaType:    e.mediaType,
 		ThumbnailURL: e.thumbnail,
-		Copyright:    demoCredit,
+		Copyright:    demoAttribution,
 		Sample:       true,
 	}
 }
