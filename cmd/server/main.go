@@ -29,6 +29,23 @@ import (
 const shutdownTimeout = 15 * time.Second
 
 func main() {
+	// "server healthcheck" is used by the Docker HEALTHCHECK: the runtime
+	// image is distroless (no shell, no curl), so the binary checks itself.
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		port := os.Getenv("PORT")
+		if port == "" {
+			port = "8080"
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		err := healthcheck(ctx, "http://127.0.0.1:"+port+"/healthz")
+		cancel() // called explicitly: os.Exit below would skip a deferred call
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "unhealthy:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	// ctx is cancelled on Ctrl+C (SIGINT) or SIGTERM, which is what Docker,
 	// Kubernetes and Fly.io send when stopping a container.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -133,7 +150,7 @@ func run(ctx context.Context) error {
 		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelWarn),
 	}
 
-	ln, err := net.Listen("tcp", httpServer.Addr)
+	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", httpServer.Addr)
 	if err != nil {
 		return err
 	}
@@ -170,6 +187,23 @@ func serve(ctx context.Context, httpServer *http.Server, ln net.Listener, logger
 		return err
 	}
 	logger.Info("server stopped cleanly")
+	return nil
+}
+
+// healthcheck GETs url and fails unless it answers 200 before ctx ends.
+func healthcheck(ctx context.Context, url string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("status %d", resp.StatusCode)
+	}
 	return nil
 }
 

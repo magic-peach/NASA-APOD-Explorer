@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -76,5 +77,26 @@ func TestServeDrainsInFlightRequests(t *testing.T) {
 
 	if _, err := http.Get(url); err == nil {
 		t.Error("server still accepted connections after shutdown")
+	}
+}
+
+func TestHealthcheck(t *testing.T) {
+	ok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	defer ok.Close()
+	if err := healthcheck(context.Background(), ok.URL); err != nil {
+		t.Errorf("healthy server: %v", err)
+	}
+
+	sick := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer sick.Close()
+	if err := healthcheck(context.Background(), sick.URL); err == nil {
+		t.Error("503 should be unhealthy")
+	}
+
+	sick.Close()
+	if err := healthcheck(context.Background(), sick.URL); err == nil {
+		t.Error("unreachable server should be unhealthy")
 	}
 }
