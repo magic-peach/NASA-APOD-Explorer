@@ -1,0 +1,14 @@
+# Keep the build context small and secret-free.
+.git
+.github
+.env
+.env.*
+!.env.example
+*.db
+*.db-shm
+*.db-wal
+bin/
+coverage.*
+docs/
+ops/
+*.md

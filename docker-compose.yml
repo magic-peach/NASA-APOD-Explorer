@@ -1,0 +1,18 @@
+# Local run: docker compose up --build
+services:
+  app:
+    build: .
+    image: nasa-apod-explorer:local
+    ports:
+      - "8080:8080"
+    env_file:
+      - path: .env
+        required: false # works with no .env (DEMO_KEY, random session secret)
+    environment:
+      DB_PATH: /data/app.db
+    volumes:
+      - apod-data:/data # SQLite survives container restarts and rebuilds
+    restart: unless-stopped
+
+volumes:
+  apod-data:
