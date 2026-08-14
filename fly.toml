@@ -15,9 +15,10 @@ primary_region = "sin"     # Singapore, the closest Fly region to India
   # Fly's proxy sets Fly-Client-IP to the real client address; the rate
   # limiter trusts only this header (never X-Forwarded-For).
   TRUSTED_PROXY_HEADER = "Fly-Client-IP"
-  # Serve sample images while NASA's APOD API returns placeholders.
-  # Set to "0" once NASA fixes it.
-  DEMO_MODE = "1"
+  # "1" serves built-in sample images instead of calling NASA. While NASA's
+  # APOD API returns placeholder entries, "0" shows those placeholders (with
+  # a notice in the UI); switch back to "1" for a demo with real images.
+  DEMO_MODE = "0"
 
 # SQLite lives on a persistent volume. A volume belongs to one machine, so
 # this app must run exactly one machine: don't `fly scale count` above 1.
