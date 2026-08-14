@@ -2,8 +2,8 @@
 # Secrets (NASA_API_KEY, SESSION_SECRET, SOLAR_SYSTEM_API_KEY) are set with
 # `fly secrets set`, never in this file.
 
-app = "nasa-apod-explorer" # change to your own, globally unique app name
-primary_region = "bom"     # Mumbai; pick the region closest to your users
+app = "apod-explorer-magicpeach" # globally unique Fly app name
+primary_region = "sin"     # Singapore, the closest Fly region to India
 
 [build]
   dockerfile = "Dockerfile"

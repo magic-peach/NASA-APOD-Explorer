@@ -79,8 +79,8 @@ fly auth login
 fly apps create <your-app-name>
 
 # 3. Create the 1 GB volume that holds the SQLite database, in the same
-#    region as primary_region in fly.toml.
-fly volumes create apod_data --region bom --size 1 --app <your-app-name>
+#    region as primary_region in fly.toml (`fly platform regions` lists them).
+fly volumes create apod_data --region sin --size 1 --app <your-app-name>
 
 # 4. Set the secrets (they're encrypted and never shown again).
 fly secrets set --app <your-app-name> \

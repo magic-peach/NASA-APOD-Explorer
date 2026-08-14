@@ -5,7 +5,7 @@
 
 Browse three decades of NASA's Astronomy Picture of the Day, served by a Go backend that fetches each picture from NASA once and serves every later request from its cache.
 
-**Live demo:** _coming soon (`https://<your-app-name>.fly.dev`)_
+**Live demo:** <https://apod-explorer-magicpeach.fly.dev> (runs in demo mode while NASA's APOD API returns placeholders; it sleeps when idle, so the first visit can take a few seconds)
 
 <!-- Screenshot placeholder: add docs/images/screenshot.png (or a short GIF of
      the gallery and viewer) and replace this comment with:
