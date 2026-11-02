@@ -106,7 +106,7 @@ What `fly.toml` sets up:
 
 **Run exactly one machine.** A Fly volume is attached to a single machine, and SQLite is a single-writer database, so don't run `fly scale count` above 1. Scaling out would mean moving to a networked database (for example Postgres) or replicating SQLite with LiteFS.
 
-**Demo mode.** `fly.toml` sets `DEMO_MODE = "0"`, so the app calls NASA with `NASA_API_KEY`. While NASA's API is returning placeholder entries, the site shows those with a notice; set it to `"1"` and redeploy to show built-in sample images instead.
+**Demo mode.** `fly.toml` sets `DEMO_MODE = "1"` because NASA's API currently returns placeholder entries for past days and HTTP 500 for today. Once it returns real pictures again, set it to `"0"` and push to `main` (CI deploys it); the app then calls NASA with the `NASA_API_KEY` secret.
 
 **Backups.** Fly takes daily snapshots of volumes automatically:
 
