@@ -65,11 +65,16 @@ func run(ctx context.Context) error {
 	apodCache := cache.New[string, []apod.Item](cfg.CacheTTL)
 	factsCache := cache.New[string, spacefacts.Summary](cfg.CacheTTL)
 
+	// Either the real NASA client or the built-in samples; both satisfy the
+	// same interface, so nothing downstream needs to know which.
+	var upstream apod.Fetcher = &apod.HTTPClient{BaseURL: apod.DefaultBaseURL, APIKey: cfg.NASAAPIKey, HTTPClient: httpClient}
+	if cfg.DemoMode {
+		upstream = &apod.DemoClient{}
+		logger.Info("DEMO_MODE on: serving built-in sample images instead of calling NASA")
+	}
+
 	srv := httpapi.New(httpapi.Deps{
-		APOD: apod.NewCachedClient(
-			&apod.HTTPClient{BaseURL: apod.DefaultBaseURL, APIKey: cfg.NASAAPIKey, HTTPClient: httpClient},
-			apodCache,
-		),
+		APOD: apod.NewCachedClient(upstream, apodCache),
 		Facts: &spacefacts.Client{
 			BaseURL:    spacefacts.DefaultBaseURL,
 			APIKey:     cfg.SolarSystemAPIKey,

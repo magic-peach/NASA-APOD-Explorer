@@ -69,7 +69,8 @@ func TestSQLInjectionIsInert(t *testing.T) {
 func TestAPODCacheRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	in := apod.Item{Date: "2024-01-01", Title: "Moon", URL: "u", MediaType: "image"}
+	in := apod.Item{Date: "2024-01-01", Title: "Moon", URL: "u", MediaType: "video",
+		Copyright: "Jane Doe", ThumbnailURL: "thumb.jpg"}
 	if err := s.SaveAPOD(ctx, []apod.Item{in}); err != nil {
 		t.Fatal(err)
 	}
@@ -108,8 +109,8 @@ func TestMigrationsAreIdempotentAndVersioned(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v != 2 {
-		t.Fatalf("schema version = %d, want 2", v)
+	if v != 3 {
+		t.Fatalf("schema version = %d, want 3", v)
 	}
 	// Running migrate again (as every restart does) must be a no-op.
 	if err := s.migrate(ctx); err != nil {
@@ -155,5 +156,22 @@ func TestDeleteFavoriteOnlyAffectsOwner(t *testing.T) {
 	}
 	if favs, _ := s.ListFavorites(ctx, alice); len(favs) != 0 {
 		t.Fatalf("favorite still present: %+v", favs)
+	}
+}
+
+func TestPlaceholdersAndSamplesAreNeverPersisted(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	err := s.SaveAPOD(ctx, []apod.Item{
+		{Date: "2024-01-01", Title: "NASA Science", Placeholder: true},
+		{Date: "2024-01-02", Title: "Sample", Sample: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{"2024-01-01", "2024-01-02"} {
+		if _, err := s.CachedAPOD(ctx, d); !errors.Is(err, ErrNotFound) {
+			t.Errorf("%s was persisted (err=%v); it would mask the real entry forever", d, err)
+		}
 	}
 }

@@ -102,3 +102,23 @@ func TestIsSingleMatchesQueryPrecedence(t *testing.T) {
 		})
 	}
 }
+
+func TestIsPlaceholder(t *testing.T) {
+	tests := []struct {
+		name string
+		it   Item
+		want bool
+	}{
+		{"boilerplate explanation", Item{Title: "x", Explanation: "Discover the cosmos! Each day a different image..."}, true},
+		{"generic title with logo image", Item{Title: "NASA Science", URL: "https://science.nasa.gov/wp-content/themes/nasa-child/assets/images/nasa-logo.svg"}, true},
+		{"real entry", Item{Title: "Stereo Helene", Explanation: "Saturn's moon Helene...", URL: "https://apod.nasa.gov/apod/image/2406/helene.jpg"}, false},
+		{"real entry that mentions NASA Science", Item{Title: "NASA Science at Work", URL: "https://apod.nasa.gov/x.jpg"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsPlaceholder(tt.it); got != tt.want {
+				t.Errorf("IsPlaceholder = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
