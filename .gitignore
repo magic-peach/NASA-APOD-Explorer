@@ -1,0 +1,21 @@
+# Local tool and editor config: never commit
+.vscode/
+.idea/
+.DS_Store
+
+# Secrets: only .env.example is committed
+.env
+.env.*
+!.env.example
+
+# Build and test output
+/bin/
+/server
+coverage.out
+coverage.html
+*.test
+
+# Local SQLite databases
+*.db
+*.db-shm
+*.db-wal
