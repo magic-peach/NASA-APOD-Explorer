@@ -10,6 +10,9 @@ import (
 	"math"
 	"net/http"
 	"strings"
+	"time"
+
+	"golang.org/x/sync/singleflight"
 
 	"github.com/magic-peach/NASA-APOD-Explorer/internal/cache"
 )
@@ -26,12 +29,19 @@ type Summary struct {
 }
 
 // Client fetches and summarises solar-system data, caching the result.
+// Every page load asks for the same single summary, so concurrent misses
+// are coalesced with singleflight (see apod.CachedClient for the details).
 type Client struct {
 	BaseURL    string
 	APIKey     string // sent as "Authorization: Bearer <key>"; the API rejects requests without one
 	HTTPClient *http.Client
 	Cache      *cache.Cache[string, Summary]
+
+	group singleflight.Group
 }
+
+// fetchTimeout bounds the shared upstream call.
+const fetchTimeout = 15 * time.Second
 
 // body is the subset of fields we read from each upstream record.
 type body struct {
@@ -48,6 +58,32 @@ func (c *Client) Summary(ctx context.Context) (Summary, error) {
 		return s, nil
 	}
 
+	ch := c.group.DoChan(key, func() (any, error) {
+		if s, ok := c.Cache.Get(key); ok {
+			return s, nil
+		}
+		fetchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), fetchTimeout)
+		defer cancel()
+		s, err := c.fetch(fetchCtx)
+		if err != nil {
+			return nil, err
+		}
+		c.Cache.Set(key, s)
+		return s, nil
+	})
+	select {
+	case <-ctx.Done():
+		return Summary{}, ctx.Err()
+	case res := <-ch:
+		if res.Err != nil {
+			return Summary{}, res.Err
+		}
+		return res.Val.(Summary), nil
+	}
+}
+
+// fetch calls the upstream API once and summarises the result.
+func (c *Client) fetch(ctx context.Context) (Summary, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL, nil)
 	if err != nil {
 		return Summary{}, fmt.Errorf("spacefacts: build request: %w", err)
@@ -71,9 +107,7 @@ func (c *Client) Summary(ctx context.Context) (Summary, error) {
 		return Summary{}, fmt.Errorf("spacefacts: decode: %w", err)
 	}
 
-	s := summarise(payload.Bodies)
-	c.Cache.Set(key, s)
-	return s, nil
+	return summarise(payload.Bodies), nil
 }
 
 // summarise is a pure function so it can be unit tested without HTTP.

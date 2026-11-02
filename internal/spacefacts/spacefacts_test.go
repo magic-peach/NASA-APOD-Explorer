@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -50,5 +52,31 @@ func TestClientSendsBearerKey(t *testing.T) {
 	}
 	if s.Planets != 1 {
 		t.Errorf("planets = %d", s.Planets)
+	}
+}
+
+func TestSummaryCoalescesConcurrentMisses(t *testing.T) {
+	var calls atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		time.Sleep(30 * time.Millisecond)
+		_, _ = w.Write([]byte(`{"bodies":[]}`))
+	}))
+	defer srv.Close()
+
+	c := &Client{BaseURL: srv.URL, HTTPClient: srv.Client(), Cache: cache.New[string, Summary](time.Minute)}
+	var wg sync.WaitGroup
+	for range 50 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := c.Summary(context.Background()); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if got := calls.Load(); got != 1 {
+		t.Errorf("upstream called %d times, want 1", got)
 	}
 }
