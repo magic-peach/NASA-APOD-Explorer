@@ -29,6 +29,7 @@ func TestLoadFrom(t *testing.T) {
 		{name: "bad log format", env: map[string]string{"LOG_FORMAT": "xml"}, wantErr: true},
 		{name: "short session secret", env: map[string]string{"SESSION_SECRET": "too-short"}, wantErr: true},
 		{name: "bad cookie flag", env: map[string]string{"COOKIE_SECURE": "maybe"}, wantErr: true},
+		{name: "bad demo flag", env: map[string]string{"DEMO_MODE": "sometimes"}, wantErr: true},
 	}
 
 	for _, tt := range tests {

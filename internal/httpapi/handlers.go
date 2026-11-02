@@ -53,12 +53,6 @@ func (s *Server) handleAPOD(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if userID, ok := s.currentUser(r); ok {
-		if err := s.Store.AddHistory(ctx, userID, items); err != nil {
-			s.log(r).Warn("recording history failed", "err", err) // history is best-effort
-		}
-	}
-
 	if q.IsSingle() {
 		writeJSON(w, http.StatusOK, items[0])
 		return
@@ -236,6 +230,34 @@ func (s *Server) handleDeleteFavorite(w http.ResponseWriter, r *http.Request, us
 	}
 	if err != nil {
 		s.internalError(w, r, "delete favorite", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleRecordView records that the user opened an entry:
+// POST /api/history {"date": "...", "title": "..."}. The frontend calls it
+// when the picture viewer opens, so history means "pictures you looked at",
+// not every entry that happened to be fetched for a gallery.
+func (s *Server) handleRecordView(w http.ResponseWriter, r *http.Request, userID int64) {
+	var in struct {
+		Date  string `json:"date"`
+		Title string `json:"title"`
+	}
+	if err := decodeJSON(w, r, &in); err != nil {
+		writeError(w, badRequest(codeBadRequest, "request body must be valid JSON"))
+		return
+	}
+	if _, apiErr := parseAPODDate("date", in.Date, s.Now()); apiErr != nil {
+		writeError(w, apiErr)
+		return
+	}
+	if len([]rune(in.Title)) > 300 {
+		writeError(w, badRequest(codeBadRequest, "title is too long"))
+		return
+	}
+	if err := s.Store.AddHistory(r.Context(), userID, []apod.Item{{Date: in.Date, Title: in.Title}}); err != nil {
+		s.internalError(w, r, "record view", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
