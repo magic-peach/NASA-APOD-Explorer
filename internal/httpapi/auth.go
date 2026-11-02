@@ -72,7 +72,7 @@ func (s *Server) requireAuth(next authedHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, ok := s.currentUser(r)
 		if !ok {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			writeErr(w, http.StatusUnauthorized, codeUnauthorized, "please log in first")
 			return
 		}
 		next(w, r, userID)
@@ -86,17 +86,16 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	if err := decodeJSON(w, r, &in); err != nil || in.Username == "" || in.Email == "" || len(in.Password) < 6 {
-		http.Error(w, "invalid signup payload", http.StatusBadRequest)
+		writeError(w, badRequest(codeBadRequest, "username, email and a password of at least 6 characters are required"))
 		return
 	}
 	_, err := s.Store.CreateUser(r.Context(), in.Username, in.Email, s.hashPassword(in.Password))
 	if errors.Is(err, store.ErrConflict) {
-		http.Error(w, "user already exists", http.StatusConflict)
+		writeErr(w, http.StatusConflict, codeConflict, "that username or email is already registered")
 		return
 	}
 	if err != nil {
-		s.Logger.Error("signup failed", "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		s.internalError(w, r, "signup", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -108,14 +107,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	if err := decodeJSON(w, r, &in); err != nil {
-		http.Error(w, "invalid payload", http.StatusBadRequest)
+		writeError(w, badRequest(codeBadRequest, "request body must be valid JSON"))
 		return
 	}
 	u, err := s.Store.UserByLogin(r.Context(), in.Username)
 	if err != nil || u.PasswordHash != s.hashPassword(in.Password) {
 		// Same message for "no such user" and "wrong password" so the
 		// response doesn't reveal which usernames exist.
-		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		writeErr(w, http.StatusUnauthorized, codeUnauthorized, "invalid username or password")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"token": s.sessions.create(u.ID)})
