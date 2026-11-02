@@ -164,12 +164,46 @@ function excerpt(text, max = 280) {
   return (sentenceEnd > 120 ? cut.slice(0, sentenceEnd + 1) : `${cut.slice(0, cut.lastIndexOf(" "))}…`).trim();
 }
 
+/** The ISO date `days` before the given ISO date. */
+function daysBefore(iso, days) {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - days);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Today's entry, or the most recent day NASA can serve. NASA's API sometimes
+ * fails for today in particular (it has returned HTTP 500 for the current
+ * day while earlier days still work), so on an upstream failure we try the
+ * previous two days before giving up. renderHero then labels it
+ * "Latest picture" instead of "Today's picture".
+ */
+async function fetchLatest() {
+  try {
+    return await api.today();
+  } catch (err) {
+    // Only fall back when the server reached us but NASA failed (502/504);
+    // a network error or a 4xx would fail the same way for other days.
+    if (!(err instanceof ApiError) || err.status < 500) throw err;
+    for (const days of [1, 2]) {
+      const date = daysBefore(TODAY, days);
+      if (date < FIRST_DAY) break;
+      try {
+        return await api.day(date);
+      } catch {
+        /* try the next day back */
+      }
+    }
+    throw err; // report the original failure for today
+  }
+}
+
 async function loadHero() {
   const section = $(".hero");
   section.setAttribute("aria-busy", "true");
   show($("#hero-error"), false);
   try {
-    const item = await api.today();
+    const item = await fetchLatest();
     state.hero = item;
     noteDataFlags(item);
     renderHero(item);
