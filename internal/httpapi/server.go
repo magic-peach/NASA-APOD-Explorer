@@ -38,8 +38,9 @@ type Assistant interface {
 }
 
 // upstreamTimeout bounds how long one API request waits on NASA or another
-// upstream service before giving up with 502.
-const upstreamTimeout = 12 * time.Second
+// upstream service before giving up with 504. It stays below the server's
+// WriteTimeout (30s) so the client always gets a proper JSON error.
+const upstreamTimeout = 20 * time.Second
 
 // Deps are the collaborators and settings a Server needs.
 type Deps struct {
