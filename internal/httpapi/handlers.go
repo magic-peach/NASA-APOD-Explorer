@@ -222,6 +222,25 @@ func (s *Server) handleAddFavorite(w http.ResponseWriter, r *http.Request, userI
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// handleDeleteFavorite removes one favorite: DELETE /api/favorites/{date}.
+func (s *Server) handleDeleteFavorite(w http.ResponseWriter, r *http.Request, userID int64) {
+	date := r.PathValue("date") // Go 1.22 path wildcard
+	if _, apiErr := parseAPODDate("date", date, s.Now()); apiErr != nil {
+		writeError(w, apiErr)
+		return
+	}
+	err := s.Store.DeleteFavorite(r.Context(), userID, date)
+	if errors.Is(err, store.ErrNotFound) {
+		writeErr(w, http.StatusNotFound, codeNotFound, "that date is not in your favorites")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "delete favorite", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request, userID int64) {
 	entries, err := s.Store.ListHistory(r.Context(), userID)
 	if err != nil {

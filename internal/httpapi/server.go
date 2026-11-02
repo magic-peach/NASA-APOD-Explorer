@@ -9,7 +9,10 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"sync"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/magic-peach/NASA-APOD-Explorer/internal/apod"
 	"github.com/magic-peach/NASA-APOD-Explorer/internal/llm"
@@ -44,13 +47,18 @@ const upstreamTimeout = 20 * time.Second
 
 // Deps are the collaborators and settings a Server needs.
 type Deps struct {
-	APOD         APODClient
-	Facts        FactsClient
-	Assistant    Assistant
-	Store        *store.Store
-	Static       fs.FS // frontend files, usually the embedded web assets
-	PasswordSalt string
-	Logger       *slog.Logger
+	APOD      APODClient
+	Facts     FactsClient
+	Assistant Assistant
+	Store     *store.Store
+	Static    fs.FS // frontend files, usually the embedded web assets
+	Logger    *slog.Logger
+
+	SessionSecret      []byte        // HMAC key for stored session tokens
+	SessionTTL         time.Duration // login lifetime (default 30 days)
+	CookieSecure       bool          // set the Secure flag on the session cookie
+	BcryptCost         int           // bcrypt work factor (default bcrypt.DefaultCost)
+	LegacyPasswordSalt string        // verifies pre-bcrypt password hashes
 
 	AllowedOrigin      string  // extra origin allowed by CORS; "" = same-origin only
 	RateLimitRPS       float64 // per-IP requests per second on /api/ (default 5)
@@ -64,8 +72,10 @@ type Deps struct {
 // Server holds handler dependencies.
 type Server struct {
 	Deps
-	sessions *sessionStore
-	limiter  *ipRateLimiter
+	limiter *ipRateLimiter
+
+	dummyOnce sync.Once // lazily computes dummy (see dummyHash)
+	dummy     []byte
 }
 
 // New builds a Server from its dependencies, filling in defaults.
@@ -82,17 +92,27 @@ func New(d Deps) *Server {
 	if d.RateLimitBurst <= 0 {
 		d.RateLimitBurst = 20
 	}
+	if d.SessionTTL <= 0 {
+		d.SessionTTL = 30 * 24 * time.Hour
+	}
+	if d.BcryptCost == 0 {
+		d.BcryptCost = bcrypt.DefaultCost
+	}
 	return &Server{
-		Deps:     d,
-		sessions: newSessionStore(),
-		limiter:  newIPRateLimiter(d.RateLimitRPS, d.RateLimitBurst),
+		Deps:    d,
+		limiter: newIPRateLimiter(d.RateLimitRPS, d.RateLimitBurst),
 	}
 }
 
-// RunBackground runs the server's maintenance loops (currently pruning idle
-// rate limiters) until ctx is cancelled. It blocks; call it in a goroutine.
+// RunBackground runs the server's maintenance loops (pruning idle rate
+// limiters and expired sessions) until ctx is cancelled. It blocks until
+// both loops have exited; call it in a goroutine.
 func (s *Server) RunBackground(ctx context.Context) {
-	s.limiter.runCleanup(ctx)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); s.limiter.runCleanup(ctx) }()
+	go func() { defer wg.Done(); s.purgeExpiredSessions(ctx) }()
+	wg.Wait()
 }
 
 // Handler returns the fully wired HTTP handler.
@@ -106,9 +126,10 @@ func (s *Server) Handler() http.Handler {
 
 	// Go 1.22+ patterns can include the method, so the mux itself answers
 	// 405 Method Not Allowed for anything not listed.
-	mux.HandleFunc("POST /api/signup", s.handleSignup)
-	mux.HandleFunc("POST /api/login", s.handleLogin)
-	mux.HandleFunc("POST /api/logout", s.handleLogout)
+	mux.HandleFunc("POST /api/auth/signup", s.handleSignup)
+	mux.HandleFunc("POST /api/auth/login", s.handleLogin)
+	mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
+	mux.HandleFunc("GET /api/auth/me", s.requireAuth(s.handleMe))
 
 	mux.HandleFunc("GET /api/apod", s.handleAPOD)
 	mux.HandleFunc("GET /api/apod/on-this-day", s.handleOnThisDay)
@@ -117,6 +138,7 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /api/favorites", s.requireAuth(s.handleListFavorites))
 	mux.HandleFunc("POST /api/favorites", s.requireAuth(s.handleAddFavorite))
+	mux.HandleFunc("DELETE /api/favorites/{date}", s.requireAuth(s.handleDeleteFavorite))
 	mux.HandleFunc("GET /api/history", s.requireAuth(s.handleHistory))
 	mux.HandleFunc("GET /api/comments", s.handleListComments)
 	mux.HandleFunc("POST /api/comments", s.requireAuth(s.handleAddComment))
@@ -139,6 +161,7 @@ func (s *Server) Handler() http.Handler {
 		withLogging(s.Logger),
 		withRecovery(s.Logger),
 		withCORS(s.AllowedOrigin),
+		withOriginCheck(s.AllowedOrigin),
 		withRateLimit(s.limiter, clientIP(s.TrustedProxyHeader)),
 	)
 }

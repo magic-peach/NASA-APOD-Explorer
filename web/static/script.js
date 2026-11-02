@@ -5,10 +5,6 @@ let isLoading = false;
 let mode = "infinite";
 let currentModalItem = null;
 
-function authHeaders() {
-  const token = localStorage.getItem("token") || "";
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
 let activeItem = null;
 
 function setLoading(show) {
@@ -18,7 +14,7 @@ function setLoading(show) {
 async function fetchApod(params = "") {
   setLoading(true);
   try {
-    const res = await fetch(`/api/apod${params}`, { headers: authHeaders() });
+    const res = await fetch(`/api/apod${params}`);
     const data = await res.json();
     return Array.isArray(data) ? data : [data];
   } finally {
@@ -89,7 +85,7 @@ async function saveFavorite() {
   if (!currentModalItem) return;
   const res = await fetch("/api/favorites", {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       title: currentModalItem.title,
       date: currentModalItem.date,
@@ -101,14 +97,14 @@ async function saveFavorite() {
 
 async function showFavorites() {
   mode = "favorites";
-  const res = await fetch("/api/favorites", { headers: authHeaders() });
+  const res = await fetch("/api/favorites");
   if (!res.ok) return alert("Login required");
   currentItems = await res.json();
   renderCards(currentItems);
 }
 
 async function showHistory() {
-  const res = await fetch("/api/history", { headers: authHeaders() });
+  const res = await fetch("/api/history");
   if (!res.ok) return alert("Login required");
   const history = await res.json();
   gallery.innerHTML = history
@@ -131,7 +127,7 @@ async function postComment() {
   if (!comment) return;
   const res = await fetch(`/api/comments?date=${currentModalItem.date}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ comment }),
   });
   if (!res.ok) return alert("Login required");
@@ -144,7 +140,7 @@ async function submitRating() {
   const rating = Number(document.getElementById("ratingSelect").value);
   const res = await fetch(`/api/ratings?date=${currentModalItem.date}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ rating }),
   });
   alert(res.ok ? "Rating saved" : "Login required");
@@ -188,31 +184,34 @@ async function signup() {
   const username = document.getElementById("authUser").value.trim();
   const password = document.getElementById("authPass").value;
   const email = username.includes("@") ? username : `${username}@space.local`;
-  const res = await fetch("/api/signup", {
+  const res = await fetch("/api/auth/signup", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, email, password }),
   });
-  alert(res.ok ? "Signup successful. Please login." : "Signup failed");
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    return alert(data.error?.message || "Signup failed");
+  }
+  // Signup logs the new user in; the server sets an HttpOnly cookie.
+  document.getElementById("authStatus").innerText = `Logged in as ${username}`;
 }
 
 async function login() {
   const username = document.getElementById("authUser").value.trim();
   const password = document.getElementById("authPass").value;
-  const res = await fetch("/api/login", {
+  const res = await fetch("/api/auth/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password }),
   });
   if (!res.ok) return alert("Invalid login");
   const data = await res.json();
-  localStorage.setItem("token", data.token);
-  document.getElementById("authStatus").innerText = `Logged in as ${username}`;
+  document.getElementById("authStatus").innerText = `Logged in as ${data.username}`;
 }
 
 async function logout() {
-  await fetch("/api/logout", { method: "POST", headers: authHeaders() });
-  localStorage.removeItem("token");
+  await fetch("/api/auth/logout", { method: "POST" });
   document.getElementById("authStatus").innerText = "Not logged in";
 }
 
@@ -323,5 +322,15 @@ function startVoiceQuestion() {
   recognition.start();
 }
 
+// The session cookie is HttpOnly, so ask the server who is logged in.
+async function loadCurrentUser() {
+  const res = await fetch("/api/auth/me");
+  if (res.ok) {
+    const me = await res.json();
+    document.getElementById("authStatus").innerText = `Logged in as ${me.username}`;
+  }
+}
+
+loadCurrentUser();
 loadMoreGallery();
 loadFacts();
