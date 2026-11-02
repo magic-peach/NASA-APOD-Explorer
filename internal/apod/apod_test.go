@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -56,6 +57,47 @@ func TestHTTPClientFetch(t *testing.T) {
 			}
 			if len(items) != tt.wantItems {
 				t.Errorf("got %d items, want %d", len(items), tt.wantItems)
+			}
+		})
+	}
+}
+
+// TestTransportErrorsDoNotLeakAPIKey guards against the API key reaching
+// logs: net/http's *url.Error embeds the request URL (with ?api_key=) in
+// its message.
+func TestTransportErrorsDoNotLeakAPIKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	srv.Close() // nothing listening: every request fails at the transport level
+
+	c := &HTTPClient{BaseURL: srv.URL, APIKey: "super-secret-key", HTTPClient: http.DefaultClient}
+	_, err := c.Fetch(context.Background(), Query{Date: "2024-01-01"})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if strings.Contains(err.Error(), "super-secret-key") {
+		t.Fatalf("error message leaks the API key: %v", err)
+	}
+}
+
+// TestIsSingleMatchesQueryPrecedence checks IsSingle agrees with values():
+// whichever form values() sends upstream decides the response shape.
+func TestIsSingleMatchesQueryPrecedence(t *testing.T) {
+	tests := []struct {
+		name string
+		q    Query
+		want bool
+	}{
+		{"today", Query{}, true},
+		{"date", Query{Date: "2024-01-01"}, true},
+		{"range", Query{StartDate: "2024-01-01", EndDate: "2024-01-02"}, false},
+		{"count", Query{Count: 3}, false},
+		{"date wins over count", Query{Date: "2024-01-01", Count: 3}, true},
+		{"range wins over date", Query{Date: "2024-01-01", StartDate: "2024-01-01", EndDate: "2024-01-02"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.q.IsSingle(); got != tt.want {
+				t.Errorf("IsSingle() = %v, want %v (query sent upstream: %q)", got, tt.want, tt.q.Key())
 			}
 		})
 	}

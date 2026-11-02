@@ -5,6 +5,7 @@ package apod
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -40,8 +41,18 @@ type Query struct {
 func (q Query) IsRange() bool { return q.StartDate != "" && q.EndDate != "" }
 
 // IsSingle reports whether NASA will answer this query with a single JSON
-// object (one date, or today) rather than an array.
-func (q Query) IsSingle() bool { return !q.IsRange() && q.Count == 0 }
+// object (one date, or today) rather than an array. It follows the same
+// precedence as values(): range, then date, then count.
+func (q Query) IsSingle() bool {
+	switch {
+	case q.IsRange():
+		return false
+	case q.Date != "":
+		return true
+	default:
+		return q.Count == 0
+	}
+}
 
 // values converts the query into NASA's URL parameters (without the key).
 func (q Query) values() url.Values {
@@ -85,6 +96,13 @@ func (c *HTTPClient) Fetch(ctx context.Context, q Query) ([]Item, error) {
 	}
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
+		// Transport errors are *url.Error, whose message includes the full
+		// request URL, and therefore the API key. Unwrap to the underlying
+		// cause so the key can never end up in logs.
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			err = urlErr.Err
+		}
 		return nil, fmt.Errorf("apod: request failed: %w", err)
 	}
 	defer resp.Body.Close()
