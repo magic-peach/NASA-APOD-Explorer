@@ -159,6 +159,7 @@ func (s *Server) Handler() http.Handler {
 	// are recovered inside logging so the 500 shows up in the log line.
 	return chain(mux,
 		withRequestID,
+		withSecurityHeaders,
 		withLogging(s.Logger),
 		withRecovery(s.Logger),
 		withCORS(s.AllowedOrigin),

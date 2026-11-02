@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -164,5 +165,23 @@ func TestLimiterForgetsIdleVisitors(t *testing.T) {
 	l.forgetIdle(10 * time.Minute)
 	if len(l.visitors) != 0 {
 		t.Errorf("idle visitor not removed")
+	}
+}
+
+func TestSecurityHeaders(t *testing.T) {
+	rec := httptest.NewRecorder()
+	withSecurityHeaders(okHandler).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	csp := rec.Header().Get("Content-Security-Policy")
+	for _, want := range []string{"script-src 'self'", "object-src 'none'", "frame-ancestors 'none'"} {
+		if !strings.Contains(csp, want) {
+			t.Errorf("CSP %q is missing %q", csp, want)
+		}
+	}
+	if strings.Contains(csp, "unsafe-inline") || strings.Contains(csp, "unsafe-eval") {
+		t.Errorf("CSP must not allow inline or eval'd script: %q", csp)
+	}
+	if rec.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Error("missing nosniff")
 	}
 }
