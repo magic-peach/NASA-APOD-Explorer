@@ -5,6 +5,7 @@ package apod
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -85,6 +86,13 @@ func (c *HTTPClient) Fetch(ctx context.Context, q Query) ([]Item, error) {
 	}
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
+		// Transport errors are *url.Error, whose message includes the full
+		// request URL, and therefore the API key. Unwrap to the underlying
+		// cause so the key can never end up in logs.
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			err = urlErr.Err
+		}
 		return nil, fmt.Errorf("apod: request failed: %w", err)
 	}
 	defer resp.Body.Close()
