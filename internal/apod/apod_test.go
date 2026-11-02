@@ -78,3 +78,27 @@ func TestTransportErrorsDoNotLeakAPIKey(t *testing.T) {
 		t.Fatalf("error message leaks the API key: %v", err)
 	}
 }
+
+// TestIsSingleMatchesQueryPrecedence checks IsSingle agrees with values():
+// whichever form values() sends upstream decides the response shape.
+func TestIsSingleMatchesQueryPrecedence(t *testing.T) {
+	tests := []struct {
+		name string
+		q    Query
+		want bool
+	}{
+		{"today", Query{}, true},
+		{"date", Query{Date: "2024-01-01"}, true},
+		{"range", Query{StartDate: "2024-01-01", EndDate: "2024-01-02"}, false},
+		{"count", Query{Count: 3}, false},
+		{"date wins over count", Query{Date: "2024-01-01", Count: 3}, true},
+		{"range wins over date", Query{Date: "2024-01-01", StartDate: "2024-01-01", EndDate: "2024-01-02"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.q.IsSingle(); got != tt.want {
+				t.Errorf("IsSingle() = %v, want %v (query sent upstream: %q)", got, tt.want, tt.q.Key())
+			}
+		})
+	}
+}
