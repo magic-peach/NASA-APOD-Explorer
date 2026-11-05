@@ -87,7 +87,6 @@ internal/store/      SQLite via database/sql, embedded SQL migrations
 internal/spacefacts/ solar-system facts client
 internal/llm/        explanation tools with offline fallbacks
 web/                 embedded frontend (no build step)
-ops/                 optional Airflow DAG and n8n workflow
 ```
 
 ## Quick start
@@ -198,8 +197,6 @@ BenchmarkStampede/cache_only          99.99 upstream-calls/op
 4. **Deploy:** pushes to `main` deploy to Fly.io once all three pass.
 
 The app runs on [Fly.io](fly.toml) with a persistent volume for SQLite, HTTPS and health checks. [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) has the exact commands.
-
-There are also optional integrations, described in [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md): a [Jenkinsfile](Jenkinsfile) mirroring CI, an [Airflow DAG](ops/airflow/apod_daily_dag.py) that pre-warms and archives each day's picture, and an [n8n workflow](ops/n8n/daily-apod-digest.json) that posts it to Discord or email.
 
 ## Design decisions
 

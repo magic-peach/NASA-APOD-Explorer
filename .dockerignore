@@ -10,5 +10,4 @@
 bin/
 coverage.*
 docs/
-ops/
 *.md

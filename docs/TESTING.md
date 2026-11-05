@@ -30,7 +30,7 @@ Previous read at 0x00c000123456 by goroutine 17:
 ```
 
 - **Reading a report:** the two stacks show the conflicting accesses, so the fix goes wherever they should have shared a lock or channel.
-- **It needs CGO and a C compiler**, which is why the Jenkins pipeline uses the Debian-based `golang` image rather than Alpine.
+- **It needs CGO and a C compiler.** GitHub's Ubuntu runners have one; Alpine-based Go images don't, so use a Debian-based `golang` image to run it in a container.
 - **It's dynamic.** It only reports races that actually happen during the run. That's why the concurrency tests deliberately start many goroutines at once (via a closed channel acting as a starting gun) instead of hoping the scheduler overlaps them.
 
 ## What the concurrency tests prove
@@ -121,4 +121,3 @@ benchstat old.txt new.txt
   - data: deep links, the favorites move on login, ratings, comments, the explanation tools;
   - safety: no CSP violations, and a comment containing HTML displayed as plain text;
   - layout: checked at 500 px wide (headless Chrome's minimum).
-- **The Jenkins pipeline, Airflow DAG and n8n workflow** were checked as described in [`INTEGRATIONS.md`](INTEGRATIONS.md#how-these-were-checked), not run inside their real tools.
