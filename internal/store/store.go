@@ -1,4 +1,5 @@
-// Package store persists users and their activity in SQLite.
+// Package store persists users and their activity in SQLite, either a local
+// file or a remote libSQL (Turso) database.
 //
 // It uses database/sql with modernc.org/sqlite, a pure-Go SQLite driver, so
 // the binary needs no CGO and no sqlite3 executable at runtime. Every query
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/magic-peach/NASA-APOD-Explorer/internal/apod"
+	"github.com/tursodatabase/libsql-client-go/libsql"
 
 	_ "modernc.org/sqlite" // registers the "sqlite" driver
 )
@@ -32,9 +34,54 @@ type Store struct {
 	db *sql.DB
 }
 
-// Open opens (creating if needed) the SQLite database at path and applies
-// any pending migrations. Use ":memory:" for a throwaway database in tests.
-func Open(ctx context.Context, path string) (*Store, error) {
+// Open opens the database and applies any pending migrations.
+//
+// path is either a local SQLite file (created if needed; ":memory:" gives a
+// throwaway database for tests) or a remote libSQL URL such as
+// "libsql://apod-explorer.turso.io". A remote database is needed on
+// serverless hosts like Vercel, whose disk is wiped between invocations.
+// authToken is only used for remote URLs.
+func Open(ctx context.Context, path, authToken string) (*Store, error) {
+	db, err := openDB(path, authToken)
+	if err != nil {
+		return nil, err
+	}
+
+	s := &Store{db: db}
+	if err := s.migrate(ctx); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+// IsRemote reports whether path is a libSQL/Turso URL rather than a file.
+func IsRemote(path string) bool {
+	for _, scheme := range []string{"libsql://", "https://", "http://"} {
+		if strings.HasPrefix(path, scheme) {
+			return true
+		}
+	}
+	return false
+}
+
+func openDB(path, authToken string) (*sql.DB, error) {
+	if IsRemote(path) {
+		// Turso speaks the same SQL dialect as SQLite, so every query and
+		// migration below runs unchanged; only the transport differs (HTTP
+		// instead of a local file). The token goes in an option, never in
+		// the URL, so it can't leak into logs.
+		var opts []libsql.Option
+		if authToken != "" {
+			opts = append(opts, libsql.WithAuthToken(authToken))
+		}
+		connector, err := libsql.NewConnector(path, opts...)
+		if err != nil {
+			return nil, fmt.Errorf("store: remote connector: %w", err)
+		}
+		return sql.OpenDB(connector), nil
+	}
+
 	// _pragma parameters are applied by the driver to every new connection:
 	//   foreign_keys  - enforce REFERENCES constraints (off by default in SQLite)
 	//   busy_timeout  - wait up to 5s for a lock instead of failing immediately
@@ -52,13 +99,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		// database, so pin the pool to a single connection.
 		db.SetMaxOpenConns(1)
 	}
-
-	s := &Store{db: db}
-	if err := s.migrate(ctx); err != nil {
-		db.Close()
-		return nil, err
-	}
-	return s, nil
+	return db, nil
 }
 
 // Close releases the database handle.

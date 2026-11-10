@@ -20,7 +20,11 @@ type Config struct {
 	Port       string        // PORT: TCP port to listen on.
 	NASAAPIKey string        // NASA_API_KEY: key for api.nasa.gov.
 	CacheTTL   time.Duration // CACHE_TTL: how long upstream responses are cached, e.g. "10m".
-	DBPath     string        // DB_PATH: path to the SQLite database file.
+	DBPath     string        // DB_PATH: SQLite file path, or a libsql:// URL for Turso.
+
+	// DBAuthToken authenticates to a remote libSQL/Turso database
+	// (DB_AUTH_TOKEN). Unused for a local SQLite file.
+	DBAuthToken string
 
 	// SolarSystemAPIKey is the free key for api.le-systeme-solaire.net
 	// (SOLAR_SYSTEM_API_KEY). Optional: without it /api/space-facts
@@ -143,6 +147,7 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 		NASAAPIKey:             get("NASA_API_KEY", "DEMO_KEY"),
 		CacheTTL:               ttl,
 		DBPath:                 get("DB_PATH", "app.db"),
+		DBAuthToken:            getenv("DB_AUTH_TOKEN"),
 		SolarSystemAPIKey:      getenv("SOLAR_SYSTEM_API_KEY"),
 		AllowedOrigin:          strings.TrimRight(getenv("APP_ORIGIN"), "/"),
 		RateLimitRPS:           rps,

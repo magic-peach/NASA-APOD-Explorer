@@ -1,6 +1,6 @@
 # Deployment
 
-This guide covers getting the secrets, running locally (directly and with Docker), and deploying to Fly.io by hand or from CI.
+This guide covers getting the secrets, running locally (directly and with Docker), and deploying to Vercel (with a Turso database) by hand or from CI. The Docker image still runs anywhere a container does; section 6 keeps the Fly.io setup for reference.
 
 ## 1. Get the keys and secrets
 
@@ -10,6 +10,7 @@ This guide covers getting the secrets, running locally (directly and with Docker
 | `SESSION_SECRET` | Yes, in production | **You generate it yourself.** See below. |
 | `SOLAR_SYSTEM_API_KEY` | Optional | Free from <https://api.le-systeme-solaire.net/generatekey.html>. Without it the "solar system in numbers" panel says the figures are unavailable. |
 | `OPENAI_API_KEY` | Optional | Enables live answers for the explanation tools; without it they give built-in answers. |
+| `DB_PATH` + `DB_AUTH_TOKEN` | Yes, on Vercel | The Turso database URL (`libsql://...`) and a token for it. See section 4. Locally `DB_PATH` is just a SQLite file. |
 
 ### `SESSION_SECRET`
 
@@ -66,7 +67,85 @@ The image is about 21 MB:
 - **Health check:** the binary checks its own `/healthz` (`/app/server healthcheck`).
 - **Stopping:** `docker stop` sends SIGTERM, and the server drains in-flight requests before exiting.
 
-## 4. Deploy to Fly.io (manual, first time)
+## 4. Deploy to Vercel + Turso (manual, first time)
+
+### Why the database moved
+
+Vercel runs the app as a **serverless function**: an instance starts on demand, may be frozen or thrown away between requests, and several can run at once. Its disk is temporary and private to one instance, so a SQLite file there would lose accounts and favourites at random. The data needs to live outside the function.
+
+[Turso](https://turso.tech) hosts libSQL, a fork of SQLite reached over HTTP. It uses the same SQL dialect, so every query and migration runs unchanged; only `store.Open` picks a different driver when `DB_PATH` is a `libsql://` URL (`internal/store/store.go`). Locally and in tests the app still uses a plain SQLite file.
+
+### How the code runs on Vercel
+
+- Vercel's Go preset runs the normal server binary: `vercel.json` builds `./cmd/server` into `$VERCEL_OUTPUT_FILE`, and Vercel routes every path to it with the original URL, so there is no separate handler or rewrite. The server listens on the `PORT` Vercel gives it.
+- `regions: ["bom1"]` runs the function in Mumbai, next to the Turso database (`aws-ap-south-1`). Every request makes a few database round trips, so keeping the two in one region matters more than anything else for latency. Vercel's default, Washington, would add an ocean crossing to each one.
+- Instances start on demand, can be paused between requests and several can run at once. That is why the data lives in Turso and not on disk.
+- When `VERCEL=1` (set by Vercel), the server refuses to start without `SESSION_SECRET`, because each instance would invent its own and reject the others' logins, or with a local `DB_PATH`.
+- The in-memory APOD cache and rate limiter are per instance. The persistent APOD cache in Turso is shared, so NASA is still called at most once per date.
+
+### Steps
+
+```sh
+# 1. Turso: create the database and a token (CLI: https://docs.turso.tech/cli/installation,
+#    or use the dashboard at https://app.turso.tech).
+turso auth login
+turso db create apod-explorer --location aws-ap-south-1   # Mumbai
+turso db show apod-explorer --url          # libsql://apod-explorer-<you>.turso.io
+turso db tokens create apod-explorer       # prints the token once
+
+# 2. Vercel: log in and link this directory to a new project.
+vercel login
+vercel link
+
+# 3. Set the environment variables (each command prompts for the value,
+#    so secrets never appear in shell history).
+vercel env add DB_PATH production
+vercel env add DB_AUTH_TOKEN production
+vercel env add SESSION_SECRET production          # openssl rand -base64 48
+vercel env add NASA_API_KEY production
+vercel env add DEMO_MODE production               # 1 while NASA returns placeholders
+vercel env add TRUSTED_PROXY_HEADER production    # X-Real-IP
+vercel env add LOG_FORMAT production              # json
+
+# 4. Deploy and check.
+vercel deploy --prod
+curl https://<your-project>.vercel.app/readyz
+```
+
+The migrations run on the first request against the new database.
+
+**Rate limiting** reads the client IP from `X-Real-IP`, which Vercel's edge sets itself and doesn't take from the client, never from the spoofable `X-Forwarded-For`.
+
+## 5. Deploy automatically from GitHub Actions
+
+`.github/workflows/ci.yml` runs on every push and pull request:
+
+| Job | What it does |
+|---|---|
+| Lint | `gofmt` check, `go vet`, `golangci-lint` |
+| Test | `go test -race` with coverage; the summary is shown on the run page and `coverage.out` is uploaded as an artifact |
+| Docker build | Builds the image (not pushed), with layer caching |
+| Deploy | Only on pushes to `main`, only after the three jobs above pass. Runs `vercel deploy --prod` |
+
+`vercel.json` sets `git.deploymentEnabled: false`, so Vercel doesn't deploy on its own when you push. The CI job is the only path to production, and it only runs once the checks are green.
+
+To turn on automatic deploys, give GitHub three secrets:
+
+```sh
+# A token from https://vercel.com/account/tokens
+gh secret set VERCEL_TOKEN
+# Both IDs are in .vercel/project.json after `vercel link`.
+gh secret set VERCEL_ORG_ID
+gh secret set VERCEL_PROJECT_ID
+```
+
+Until they exist, the deploy job skips itself with a note instead of failing.
+
+The deploy job uses a GitHub environment called `production`. In **Settings → Environments → production** you can require a manual approval before each deploy.
+
+## 6. Fly.io (previous host, kept for reference)
+
+The app ran on Fly.io until the free trial ended. Nothing here is needed for Vercel; it still works if you'd rather run the container.
 
 Install `flyctl` (<https://fly.io/docs/flyctl/install/>), then:
 
@@ -115,37 +194,15 @@ fly volumes list --app <your-app-name>
 fly volumes snapshots list <volume-id>
 ```
 
-## 5. Deploy automatically from GitHub Actions
-
-`.github/workflows/ci.yml` runs on every push and pull request:
-
-| Job | What it does |
-|---|---|
-| Lint | `gofmt` check, `go vet`, `golangci-lint` |
-| Test | `go test -race` with coverage; the summary is shown on the run page and `coverage.out` is uploaded as an artifact |
-| Docker build | Builds the image (not pushed), with layer caching |
-| Deploy | Only on pushes to `main`, only after the three jobs above pass. Runs `flyctl deploy --remote-only` |
-
-To turn on automatic deploys, give GitHub a Fly deploy token:
-
-```sh
-# A token that can only deploy this one app.
-fly tokens create deploy --app <your-app-name>
-
-# Store it as a repository secret (paste the token when prompted).
-gh secret set FLY_API_TOKEN
-```
-
-Until `FLY_API_TOKEN` exists, the deploy job skips itself with a note instead of failing.
-
-The deploy job uses a GitHub environment called `production`. In **Settings → Environments → production** you can require a manual approval before each deploy.
+To deploy to Fly from CI instead of Vercel, swap the `deploy` job in `ci.yml` back to `flyctl deploy --remote-only` with a `FLY_API_TOKEN` secret (`fly tokens create deploy`).
 
 ## Troubleshooting
 
 | Symptom | Likely cause |
 |---|---|
-| Everyone gets logged out after a deploy | `SESSION_SECRET` isn't set as a Fly secret, so a random one is generated on each start. |
+| Every request returns 503 on Vercel | Startup failed. `vercel logs` shows why: usually `SESSION_SECRET` or `DB_PATH` is missing, or the Turso token is wrong. |
+| Everyone gets logged out after a deploy | `SESSION_SECRET` changed, or (outside Vercel) isn't set, so a random one is generated on each start. |
 | Login works locally over plain HTTP on another device, but the cookie never sticks | Session cookies are `Secure`. Browsers allow that on `http://localhost` only. Use HTTPS, or set `COOKIE_SECURE=false` for that test. |
 | Every picture shows the NASA logo | NASA's API is returning placeholder entries. Use `DEMO_MODE=1` until it's fixed. |
-| `/readyz` returns 503 | The database can't be opened. Check the volume is mounted at `/data` (`fly volumes list`). |
+| `/readyz` returns 503 | The database can't be reached. On Vercel, check `DB_PATH` and `DB_AUTH_TOKEN`; in Docker, check the volume is mounted at `/data`. |
 | 429 Too Many Requests | The per-IP rate limit (`RATE_LIMIT_RPS`, `RATE_LIMIT_BURST`). |

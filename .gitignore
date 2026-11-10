@@ -19,3 +19,4 @@ coverage.html
 *.db
 *.db-shm
 *.db-wal
+.vercel

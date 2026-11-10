@@ -1,0 +1,15 @@
+# Only the Go module is needed to build api/index.go.
+.git
+.github
+docs
+*.md
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.*
+coverage.*
+bin/
+Dockerfile
+docker-compose*.yml
+fly.toml

@@ -70,8 +70,10 @@ jobs:
           cache-to: type=gha,mode=max
 
   deploy:
-    name: Deploy to Fly.io
+    name: Deploy to Vercel
     # Only after everything passes, and only for pushes to main (never PRs).
+    # vercel.json turns off Vercel's own Git deploys, so this job is the
+    # only way code reaches production.
     needs: [lint, test, docker]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -81,20 +83,22 @@ jobs:
       group: deploy-production
       cancel-in-progress: false
     env:
-      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
     steps:
       - uses: actions/checkout@v4
-      - name: Skip if Fly.io is not set up yet
+      - name: Skip if Vercel is not set up yet
         id: check
         run: |
-          if [ -z "$FLY_API_TOKEN" ]; then
-            echo "FLY_API_TOKEN secret not set; skipping deploy (see docs/DEPLOYMENT.md)." | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ -z "$VERCEL_TOKEN" ] || [ -z "$VERCEL_ORG_ID" ] || [ -z "$VERCEL_PROJECT_ID" ]; then
+            echo "Vercel secrets not set; skipping deploy (see docs/DEPLOYMENT.md)." | tee -a "$GITHUB_STEP_SUMMARY"
             echo "ready=false" >> "$GITHUB_OUTPUT"
           else
             echo "ready=true" >> "$GITHUB_OUTPUT"
           fi
-      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: vercel deploy --prod
         if: steps.check.outputs.ready == 'true'
-      - name: flyctl deploy
-        if: steps.check.outputs.ready == 'true'
-        run: flyctl deploy --remote-only
+        # The token is read from the environment, never passed on the
+        # command line where it could show up in logs.
+        run: npx --yes vercel@59.11.2 deploy --prod
