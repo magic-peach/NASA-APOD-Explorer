@@ -12,7 +12,7 @@ import (
 // newTestStore returns a fresh in-memory database, closed when the test ends.
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
-	s, err := Open(context.Background(), ":memory:")
+	s, err := Open(context.Background(), ":memory:", "")
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -172,6 +172,22 @@ func TestPlaceholdersAndSamplesAreNeverPersisted(t *testing.T) {
 	for _, d := range []string{"2024-01-01", "2024-01-02"} {
 		if _, err := s.CachedAPOD(ctx, d); !errors.Is(err, ErrNotFound) {
 			t.Errorf("%s was persisted (err=%v); it would mask the real entry forever", d, err)
+		}
+	}
+}
+
+func TestIsRemote(t *testing.T) {
+	cases := map[string]bool{
+		"app.db":                          false,
+		"/data/app.db":                    false,
+		":memory:":                        false,
+		"libsql://apod-explorer.turso.io": true,
+		"https://apod-explorer.turso.io":  true,
+		"http://127.0.0.1:8080":           true,
+	}
+	for path, want := range cases {
+		if got := IsRemote(path); got != want {
+			t.Errorf("IsRemote(%q) = %v, want %v", path, got, want)
 		}
 	}
 }

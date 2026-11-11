@@ -5,7 +5,7 @@
 
 Browse three decades of NASA's Astronomy Picture of the Day, served by a Go backend that fetches each picture from NASA once and serves every later request from its cache.
 
-**Live demo:** <https://apod-explorer-magicpeach.fly.dev> (runs in demo mode while NASA's APOD API returns placeholders; it sleeps when idle, so the first visit can take a few seconds)
+**Live demo:** <https://apod-explorer-magicpeach.vercel.app> (runs in demo mode while NASA's APOD API returns placeholders)
 
 <!-- Screenshot placeholder: add docs/images/screenshot.png (or a short GIF of
      the gallery and viewer) and replace this comment with:
@@ -154,7 +154,8 @@ Everything is set with environment variables; [`.env.example`](.env.example) lis
 | `PORT` | `8080` | HTTP port |
 | `NASA_API_KEY` | `DEMO_KEY` | NASA API key (the default is heavily rate-limited) |
 | `SESSION_SECRET` | random per process | HMAC key for stored session tokens, at least 32 characters. Set it in production, or restarts log everyone out. |
-| `DB_PATH` | `app.db` | SQLite database file |
+| `DB_PATH` | `app.db` | SQLite database file, or a `libsql://` Turso URL |
+| `DB_AUTH_TOKEN` | | Token for a Turso database |
 | `CACHE_TTL` | `10m` | How long upstream responses stay in memory |
 | `DEMO_MODE` | `false` | Serve built-in sample images instead of calling NASA |
 | `SOLAR_SYSTEM_API_KEY` | | Enables the space-facts panel |
@@ -164,7 +165,7 @@ Everything is set with environment variables; [`.env.example`](.env.example) lis
 | `COOKIE_SECURE` | `true` | `Secure` flag on the session cookie |
 | `RATE_LIMIT_RPS` / `RATE_LIMIT_BURST` | `5` / `20` | Per-IP token bucket for `/api/` |
 | `APP_ORIGIN` | | One extra origin allowed by CORS (default: same-origin only) |
-| `TRUSTED_PROXY_HEADER` | | Header with the real client IP behind a proxy, e.g. `Fly-Client-IP` |
+| `TRUSTED_PROXY_HEADER` | | Header with the real client IP behind a proxy, e.g. `X-Real-IP` on Vercel |
 | `LOG_FORMAT` | `text` | `text` or `json` |
 | `APP_SALT` | `nasa-apod-salt` | Only used to verify passwords from before bcrypt (they're upgraded on login) |
 
@@ -194,9 +195,9 @@ BenchmarkStampede/cache_only          99.99 upstream-calls/op
 1. **Lint:** `gofmt`, `go vet`, `golangci-lint`.
 2. **Test:** `go test -race` with coverage.
 3. **Docker build.**
-4. **Deploy:** pushes to `main` deploy to Fly.io once all three pass.
+4. **Deploy:** pushes to `main` deploy to Vercel once all three pass.
 
-The app runs on [Fly.io](fly.toml) with a persistent volume for SQLite, HTTPS and health checks. [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) has the exact commands.
+The app runs on [Vercel](vercel.json) as a serverless function, with its data in a [Turso](https://turso.tech) database (hosted SQLite). The Docker image still runs anywhere a container does. [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) has the exact commands.
 
 ## Design decisions
 
@@ -219,10 +220,10 @@ The app runs on [Fly.io](fly.toml) with a persistent volume for SQLite, HTTPS an
 - **NASA's APOD API is returning placeholders.**
   - APOD moved to `science.nasa.gov`, and `api.nasa.gov/planetary/apod` now answers most dates with the site's generic "NASA Science" page.
   - The app detects these and shows a notice. `DEMO_MODE=1` serves built-in public-domain sample images until NASA fixes the API.
-- **Single instance only.**
-  - SQLite and the in-memory caches, sessions purge and rate limiter live in one process.
-  - Running several instances would need a shared database and a shared rate-limit store.
-- **The rate limiter is per process and in memory.** Limits reset on restart.
+- **The rate limiter and short-lived caches are per instance.**
+  - On Vercel the database is shared (Turso), but each function instance keeps its own in-memory rate limiter and 10-minute caches.
+  - A client spread across several instances gets a higher effective limit. A shared store (for example Redis) would fix that.
+- **Limits reset when an instance restarts.**
 - **No email verification or password reset** for accounts.
 - **Explanation tools without a configured model give generic built-in answers**, not answers specific to the picture.
 

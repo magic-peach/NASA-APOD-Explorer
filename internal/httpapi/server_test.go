@@ -100,7 +100,7 @@ type testEnv struct {
 // newTestServer wires a Server against fakes and an in-memory database.
 func newTestServer(t *testing.T, api *fakeAPOD) testEnv {
 	t.Helper()
-	db, err := store.Open(context.Background(), ":memory:")
+	db, err := store.Open(context.Background(), ":memory:", "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -66,11 +66,24 @@ func run(ctx context.Context) error {
 	}
 	logger := newLogger(cfg.LogFormat)
 	slog.SetDefault(logger)
+	// Vercel sets VERCEL=1. There, instances come and go and several run at
+	// once, so two laptop-friendly fallbacks would fail silently: a random
+	// session secret per instance (logins rejected by the next instance)
+	// and a SQLite file on the instance's temporary disk (data lost at
+	// random). Refuse to start instead.
+	if os.Getenv("VERCEL") == "1" {
+		if cfg.SessionSecretGenerated {
+			return errors.New("SESSION_SECRET must be set on Vercel")
+		}
+		if !store.IsRemote(cfg.DBPath) {
+			return errors.New("DB_PATH must be a libsql:// URL on Vercel")
+		}
+	}
 	if cfg.SessionSecretGenerated {
 		logger.Warn("SESSION_SECRET not set; using a random one, so restarts will log everyone out")
 	}
 
-	db, err := store.Open(ctx, cfg.DBPath)
+	db, err := store.Open(ctx, cfg.DBPath, cfg.DBAuthToken)
 	if err != nil {
 		return err
 	}
