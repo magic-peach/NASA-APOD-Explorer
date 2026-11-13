@@ -39,7 +39,7 @@ make run                      # or: go run ./cmd/server
 
 Open <http://localhost:8080>.
 
-While NASA's APOD API is returning placeholder data (see the README), use demo mode to see real images:
+To run without calling NASA at all (offline, or for screenshots), use demo mode:
 
 ```sh
 make demo                     # DEMO_MODE=1 go run ./cmd/server
@@ -103,7 +103,6 @@ vercel env add DB_PATH production
 vercel env add DB_AUTH_TOKEN production
 vercel env add SESSION_SECRET production          # openssl rand -base64 48
 vercel env add NASA_API_KEY production
-vercel env add DEMO_MODE production               # 1 while NASA returns placeholders
 vercel env add TRUSTED_PROXY_HEADER production    # X-Real-IP
 vercel env add LOG_FORMAT production              # json
 
@@ -203,6 +202,6 @@ To deploy to Fly from CI instead of Vercel, swap the `deploy` job in `ci.yml` ba
 | Every request returns 503 on Vercel | Startup failed. `vercel logs` shows why: usually `SESSION_SECRET` or `DB_PATH` is missing, or the Turso token is wrong. |
 | Everyone gets logged out after a deploy | `SESSION_SECRET` changed, or (outside Vercel) isn't set, so a random one is generated on each start. |
 | Login works locally over plain HTTP on another device, but the cookie never sticks | Session cookies are `Secure`. Browsers allow that on `http://localhost` only. Use HTTPS, or set `COOKIE_SECURE=false` for that test. |
-| Every picture shows the NASA logo | NASA's API is returning placeholder entries. Use `DEMO_MODE=1` until it's fixed. |
+| Every picture shows the NASA logo | The science.nasa.gov feed is down and the app fell back to `api.nasa.gov`, which returns placeholders. It recovers on its own; `DEMO_MODE=1` shows sample images meanwhile. |
 | `/readyz` returns 503 | The database can't be reached. On Vercel, check `DB_PATH` and `DB_AUTH_TOKEN`; in Docker, check the volume is mounted at `/data`. |
 | 429 Too Many Requests | The per-IP rate limit (`RATE_LIMIT_RPS`, `RATE_LIMIT_BURST`). |

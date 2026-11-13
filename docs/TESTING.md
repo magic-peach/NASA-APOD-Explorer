@@ -105,7 +105,7 @@ benchstat old.txt new.txt
 | Package | What's covered |
 |---|---|
 | `internal/cache` | expiry at and just before the TTL, per-entry TTL, overwrite refreshing expiry, eviction, janitor shutdown, concurrent access |
-| `internal/apod` | query keys, both NASA response shapes, upstream errors, the API key never appearing in errors, placeholder detection, the demo client, `singleflight` behaviour (above) |
+| `internal/apod` | query keys, both NASA response shapes, the science.nasa.gov feed (images, YouTube and mp4 videos, ranges skipping archive gaps, random picks) and the fallback to api.nasa.gov, upstream errors, the API key never appearing in errors, placeholder detection, the demo client, `singleflight` behaviour (above) |
 | `internal/config` | defaults, overrides, and rejecting bad values (TTL, rate limits, log format, short session secret, booleans) |
 | `internal/store` | duplicate users, idempotent favorites, owner-only deletes, a SQL-injection string matching nothing, ratings, sessions expiring, migrations being versioned and idempotent, placeholders and samples never persisted |
 | `internal/httpapi` | response shapes; the JSON error shape for every error class; validation tables (formats, archive bounds, New York "today", 30-day ranges, counts, conflicting parameters); middleware (request IDs, panic recovery, CORS, per-IP rate limits, trusted proxy header, security headers); health and readiness |
