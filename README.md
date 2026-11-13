@@ -5,7 +5,7 @@
 
 Browse three decades of NASA's Astronomy Picture of the Day, served by a Go backend that fetches each picture from NASA once and serves every later request from its cache.
 
-**Live demo:** <https://apod-explorer-magicpeach.vercel.app> (runs in demo mode while NASA's APOD API returns placeholders)
+**Live demo:** <https://apod-explorer-magicpeach.vercel.app>
 
 <!-- Screenshot placeholder: add docs/images/screenshot.png (or a short GIF of
      the gallery and viewer) and replace this comment with:
@@ -79,7 +79,7 @@ A request for one day's picture checks three layers in order:
 
 ```
 cmd/server/          entry point: config, wiring, http.Server, graceful shutdown, healthcheck
-internal/apod/       NASA client, cached + singleflight decorator, placeholder detection, demo client
+internal/apod/       science.nasa.gov feed client, api.nasa.gov fallback, cached + singleflight decorator, placeholder detection, demo client
 internal/cache/      generic concurrency-safe TTL cache with a janitor goroutine
 internal/config/     environment-variable configuration with validation
 internal/httpapi/    handlers, middleware, validation, auth and sessions
@@ -110,8 +110,6 @@ Open <http://localhost:8080>.
 ```sh
 docker compose up --build    # SQLite is kept in a named volume
 ```
-
-> NASA's APOD API is currently returning placeholder content for most dates (see [Known limitations](#known-limitations)). Use `make demo` / `DEMO_MODE=1` to see the app with real images.
 
 ## API reference
 
@@ -217,9 +215,10 @@ The app runs on [Vercel](vercel.json) as a serverless function, with its data in
 
 ## Known limitations
 
-- **NASA's APOD API is returning placeholders.**
-  - APOD moved to `science.nasa.gov`, and `api.nasa.gov/planetary/apod` now answers most dates with the site's generic "NASA Science" page.
-  - The app detects these and shows a notice. `DEMO_MODE=1` serves built-in public-domain sample images until NASA fixes the API.
+- **Pictures come from science.nasa.gov, not api.nasa.gov.**
+  - APOD moved to `science.nasa.gov`, and `api.nasa.gov/planetary/apod` now answers most dates with the site's generic "NASA Science" page (the NASA logo instead of the picture).
+  - The app reads APOD's own feed (`science.nasa.gov/wp-json/wp/v2/apod-basic`) first. It needs no key and returns the real picture or video for every date. `api.nasa.gov` with `NASA_API_KEY` is only the fallback when that feed is unreachable; its placeholders are detected, flagged in the UI and never stored.
+  - The feed serves one date per request, so a range or random pick is built from parallel requests (at most 6 at a time).
 - **The rate limiter and short-lived caches are per instance.**
   - On Vercel the database is shared (Turso), but each function instance keeps its own in-memory rate limiter and 10-minute caches.
   - A client spread across several instances gets a higher effective limit. A shared store (for example Redis) would fix that.

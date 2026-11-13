@@ -97,7 +97,12 @@ func run(ctx context.Context) error {
 
 	// Either the real NASA client or the built-in samples; both satisfy the
 	// same interface, so nothing downstream needs to know which.
-	var upstream apod.Fetcher = &apod.HTTPClient{BaseURL: apod.DefaultBaseURL, APIKey: cfg.NASAAPIKey, HTTPClient: httpClient}
+	// science.nasa.gov is APOD's home now and returns the real pictures;
+	// api.nasa.gov (with the API key) is the backup if it is unreachable.
+	var upstream apod.Fetcher = &apod.Fallback{
+		Primary:   &apod.ScienceClient{BaseURL: apod.ScienceBaseURL, HTTPClient: httpClient},
+		Secondary: &apod.HTTPClient{BaseURL: apod.DefaultBaseURL, APIKey: cfg.NASAAPIKey, HTTPClient: httpClient},
+	}
 	if cfg.DemoMode {
 		upstream = &apod.DemoClient{}
 		logger.Info("DEMO_MODE on: serving built-in sample images instead of calling NASA")
